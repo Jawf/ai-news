@@ -1,0 +1,12 @@
+{
+  "schedule_time": "08:00",
+  "schedule_enabled": true,
+  "feishu_chat_id": "ou_bfba0b2292e6c00566bcbc688af36fbe",
+  "feishu_webhook_url": "",
+  "feishu_app_id": "cli_a93dca5ea08d9cc1",
+  "feishu_app_secret": "",
+  "claude_command": "claude",
+  "claude_prompt_template": "今天是{date}，请完成以下财经新闻收集任务：\n\n**第一步：多平台搜索**\n使用WebSearch工具，依次搜索以下关键词，获取今日最新财经新闻：\n- \"今日财经新闻 {date}\"\n- \"Bloomberg财经新闻 今天\"\n- \"Reuters财经 今天\"\n- \"财联社 今日重磅\"\n- \"东方财富 今日头条\"\n- \"证券时报 今日要闻\"\n- \"第一财经 今天\"\n\n**第二步：对比筛选**\n综合各平台新闻，按照以下维度评估：\n1. 市场影响力（涉及大盘、汇率、重大政策）\n2. 热度（多平台同时报道）\n3. 时效性（今日最新）\n选出 TOP 10 最重要财经新闻。\n\n**第三步：格式化输出**\n只需输出以下格式的 TOP 10，不要输出其他内容：\n📰 {date} 财经TOP10\n\n1. 【来源】标题\n   摘要：50字以内核心内容\n\n2. 【来源】标题\n   摘要：50字以内核心内容\n\n...（共10条）",
+  "timeout_seconds": 600,
+  "log_max_lines": 1000
+}
