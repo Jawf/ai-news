@@ -1,0 +1,21 @@
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+  background: #f5f6f8; color: #1a1a1a; line-height: 1.5; }
+.topbar { background: #b91c1c; color: #fff; padding: 14px 16px; position: sticky; top: 0; }
+.topbar h1 { font-size: 18px; }
+main { max-width: 1200px; margin: 0 auto; padding: 12px; }
+.filters { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+.filters select, .filters input { padding: 8px; border: 1px solid #ddd; border-radius: 8px; font-size: 14px; }
+.news-list { list-style: none; display: grid; grid-template-columns: 1fr; gap: 10px; }
+.news-card { background: #fff; border-radius: 12px; padding: 14px; box-shadow: 0 1px 3px rgba(0,0,0,.06); }
+.news-card .meta { font-size: 12px; color: #888; display: flex; gap: 10px; margin-bottom: 6px; }
+.news-card .cat { color: #b91c1c; }
+.news-card .title { font-size: 16px; font-weight: 600; color: #111; text-decoration: none; display: block; }
+.news-card .content { font-size: 14px; color: #444; margin-top: 6px; }
+.empty { text-align: center; color: #999; padding: 40px; }
+.pager { display: flex; justify-content: center; gap: 16px; align-items: center; padding: 20px; }
+.pager a { color: #b91c1c; text-decoration: none; }
+/* iPad 双列 */
+@media (min-width: 768px) { .news-list { grid-template-columns: 1fr 1fr; } }
+/* PC 多列 */
+@media (min-width: 1100px) { .news-list { grid-template-columns: 1fr 1fr 1fr; } }

@@ -6,7 +6,9 @@ from ainews.models import NewsItem
 
 
 def get_conn(db_path: str) -> sqlite3.Connection:
-    conn = sqlite3.connect(db_path)
+    # check_same_thread=False: ASGI 服务器（TestClient/uvicorn）通过线程池执行同步路由，
+    # 单个连接可能被多个线程访问；SQLite 默认编译为线程安全（serialized），可放行。
+    conn = sqlite3.connect(db_path, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     return conn
 
