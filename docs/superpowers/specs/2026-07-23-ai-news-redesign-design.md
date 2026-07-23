@@ -148,6 +148,66 @@
 
 - 旧 Tkinter `main.py` 退役；`job_runner.py` 飞书逻辑保留并抽模块；`logs/` 目录沿用；`state.json` 由 `fetch_runs` 表取代。
 
+## Phase 2：分析洞察层（已获用户批准）
+
+叠加在 Phase 1 底座（抓取→存储→展示）之上的分析子系统。
+
+### 已确认决策
+
+| 决策点 | 结论 |
+|--------|------|
+| 分析引擎 | Claude AI 批量分析（复用 `claude_command` CLI） |
+| 分析时机 | 每日 08:00 与 12:00 各批量一次 |
+| 自选股关联 | 按个股名称/代码/别名文本匹配 |
+| 自选股维护 | 本地 watchlist 表 + Web 页面增删 |
+
+### 分析引擎
+
+调度器新增两个每日定时点。每次运行：取当日全部新闻 → 拼结构化 prompt 交 Claude CLI → 解析其强制 JSON 输出 → 整份落库为「当日洞察快照」。
+
+**Claude 输出 JSON 契约：**
+
+```json
+{
+  "top20": [{"title": "...", "source": "xq", "importance": 95,
+             "sentiment": "利好|利空|中性", "sectors": ["半导体"],
+             "stocks": [{"name": "中芯国际", "code": "688981"}],
+             "reason": "一句影响判断"}],
+  "bullish": {"directions": ["..."], "sectors": ["..."], "stocks": [{"name": "...", "code": "..."}]},
+  "bearish": {"directions": ["..."], "sectors": ["..."], "stocks": [{"name": "...", "code": "..."}]},
+  "company_sina": [{"company": "...", "sentiment": "利好|利空", "summary": "..."}],
+  "top5_bullish": [{"title": "...", "reason": "..."}]
+}
+```
+
+覆盖：Top20 汇总、利好方向/板块/个股、利空方向/板块/个股、新浪公司资讯利好/利空、Top5 利好。
+
+### 数据模型（新增）
+
+- **analysis_runs**：`id / run_at / status / error / payload_json`——存整份 Claude 输出，最近一次成功即"当前洞察"，可审计。
+- **watchlist**：`id / code(唯一) / name / aliases_json / added_at`。
+- Top20 明细从 payload_json 渲染，不拆表（YAGNI）。
+
+### 新浪公司资讯
+
+分析输入中 `source=sina` 条目由 Claude 单独产出公司级利好/利空（`company_sina` 段）。若抓包发现 tushare 有独立新浪"公司"频道，则在 `sources.yaml` 增一条 `sina_company` 源。
+
+### 自选股关联 + 风险 tag
+
+- 渲染时把最新洞察里抽取的个股与 watchlist 的 name/code/aliases 文本匹配，命中即挂风险 tag（利好=绿 / 利空=红）。
+- 自选股页单独展示"与我的自选股相关的消息"。
+- 不预建全 A 股词典：AI 抽个股，watchlist 提供匹配锚点。
+
+### Web 新增
+
+- `GET /insights`：当日洞察页（Top20 带情感/板块/个股 tag、利好/利空汇总、Top5 利好、新浪公司归类）。
+- `GET /watchlist` + `POST /watchlist/add` / `POST /watchlist/remove`：自选股管理与关联消息。
+- 复用 Phase 1 响应式 CSS 与 TTL 缓存。
+
+### 依赖方向
+
+Phase 1 底座先行；Phase 2 只读底座数据 + 新增自身表，不反向修改底座契约。
+
 ## 组件边界一览
 
 | 组件 | 职责 | 依赖 |

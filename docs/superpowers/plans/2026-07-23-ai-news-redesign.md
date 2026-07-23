@@ -1452,6 +1452,769 @@ git commit -m "feat: 抓包确认 tushare xq/sina 接口并启用真实源 + 样
 
 ---
 
+## Phase 2：分析洞察层
+
+### Task 12: 分析/自选股存储扩展
+
+**Files:**
+- Modify: `ainews/db.py`
+- Test: `tests/test_db_analysis.py`
+
+**Interfaces:**
+- Produces:
+  - `ainews.db.save_analysis_run(conn, run_at: datetime, status: str, payload: dict | None = None, error: str = "") -> None`
+  - `ainews.db.latest_analysis(conn) -> dict | None`（最近一次 `status='ok'` 的 payload dict；无则 None）
+  - `ainews.db.add_watch(conn, code: str, name: str, aliases: list[str] | None = None) -> bool`（重复 code 返回 False）
+  - `ainews.db.remove_watch(conn, code: str) -> bool`
+  - `ainews.db.list_watch(conn) -> list[dict]`（含 `code/name/aliases`，aliases 已反序列化为 list）
+
+- [ ] **Step 1: 写失败测试**
+
+Create `tests/test_db_analysis.py`:
+```python
+import datetime
+from ainews import db
+
+
+def _conn():
+    c = db.get_conn(":memory:")
+    db.init_db(c)
+    return c
+
+
+def test_save_and_latest_analysis():
+    c = _conn()
+    t = datetime.datetime(2026, 7, 23, 8, 0)
+    db.save_analysis_run(c, t, "error", payload=None, error="boom")
+    db.save_analysis_run(c, t, "ok", payload={"top20": [{"title": "降准"}]})
+    latest = db.latest_analysis(c)
+    assert latest["top20"][0]["title"] == "降准"
+
+
+def test_latest_analysis_none_when_empty():
+    assert db.latest_analysis(_conn()) is None
+
+
+def test_watchlist_crud():
+    c = _conn()
+    assert db.add_watch(c, "688981", "中芯国际", aliases=["中芯"]) is True
+    assert db.add_watch(c, "688981", "中芯国际") is False  # 重复 code
+    rows = db.list_watch(c)
+    assert rows[0]["name"] == "中芯国际"
+    assert rows[0]["aliases"] == ["中芯"]
+    assert db.remove_watch(c, "688981") is True
+    assert db.list_watch(c) == []
+```
+
+- [ ] **Step 2: 运行测试确认失败**
+
+Run: `uv run pytest tests/test_db_analysis.py -v`
+Expected: FAIL（`AttributeError: module 'ainews.db' has no attribute 'save_analysis_run'`）
+
+- [ ] **Step 3: 写实现**
+
+Modify `ainews/db.py` —— `init_db` 的 `executescript` 末尾追加两张表：
+```sql
+        CREATE TABLE IF NOT EXISTS analysis_runs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_at TEXT,
+            status TEXT,
+            error TEXT DEFAULT '',
+            payload_json TEXT DEFAULT ''
+        );
+        CREATE TABLE IF NOT EXISTS watchlist (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            code TEXT NOT NULL UNIQUE,
+            name TEXT NOT NULL,
+            aliases_json TEXT DEFAULT '[]',
+            added_at TEXT
+        );
+```
+
+文件末尾追加（并在文件头 `import json`）：
+```python
+def save_analysis_run(conn, run_at, status, payload=None, error="") -> None:
+    conn.execute(
+        "INSERT INTO analysis_runs (run_at, status, error, payload_json) VALUES (?, ?, ?, ?)",
+        (_iso(run_at), status, error, json.dumps(payload or {}, ensure_ascii=False)),
+    )
+    conn.commit()
+
+
+def latest_analysis(conn) -> dict | None:
+    row = conn.execute(
+        "SELECT payload_json FROM analysis_runs WHERE status='ok' ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    return json.loads(row[0]) if row else None
+
+
+def add_watch(conn, code: str, name: str, aliases: list[str] | None = None) -> bool:
+    import datetime as _dt
+    try:
+        conn.execute(
+            "INSERT INTO watchlist (code, name, aliases_json, added_at) VALUES (?, ?, ?, ?)",
+            (code, name, json.dumps(aliases or [], ensure_ascii=False),
+             _dt.datetime.now().isoformat()),
+        )
+        conn.commit()
+        return True
+    except sqlite3.IntegrityError:
+        return False
+
+
+def remove_watch(conn, code: str) -> bool:
+    cur = conn.execute("DELETE FROM watchlist WHERE code = ?", (code,))
+    conn.commit()
+    return cur.rowcount > 0
+
+
+def list_watch(conn) -> list[dict]:
+    rows = conn.execute("SELECT code, name, aliases_json FROM watchlist ORDER BY id").fetchall()
+    return [{"code": r["code"], "name": r["name"], "aliases": json.loads(r["aliases_json"])}
+            for r in rows]
+```
+
+- [ ] **Step 4: 运行测试确认通过（含全量回归）**
+
+Run: `uv run pytest -v`
+Expected: 全部 PASS（Phase 1 既有测试不受影响）
+
+- [ ] **Step 5: 提交**
+
+```bash
+git add ainews/db.py tests/test_db_analysis.py
+git commit -m "feat: analysis_runs + watchlist 存储"
+```
+
+---
+
+### Task 13: Claude 批量分析引擎
+
+**Files:**
+- Create: `ainews/analyzer.py`
+- Test: `tests/test_analyzer.py`
+
+**Interfaces:**
+- Consumes: `ainews.db.query_news / save_analysis_run`
+- Produces:
+  - `ainews.analyzer.build_analysis_prompt(items: list[dict], date_cn: str) -> str`
+  - `ainews.analyzer.parse_analysis_output(text: str) -> dict`（从 CLI 输出中提取首个 JSON 对象；无法解析抛 `ValueError`）
+  - `ainews.analyzer.run_analysis(config: dict, conn, runner=None) -> bool`（runner(prompt, config)->str，默认走 `claude --print` 子进程；成功落 ok 快照，失败落 error 记录并返回 False）
+
+- [ ] **Step 1: 写失败测试**
+
+Create `tests/test_analyzer.py`:
+```python
+import json
+import pytest
+from ainews import analyzer, db
+from ainews.models import NewsItem
+
+PAYLOAD = {
+    "top20": [{"title": "央行降准", "source": "xq", "importance": 95,
+               "sentiment": "利好", "sectors": ["银行"],
+               "stocks": [{"name": "招商银行", "code": "600036"}],
+               "reason": "流动性宽松"}],
+    "bullish": {"directions": ["宽松"], "sectors": ["银行"],
+                "stocks": [{"name": "招商银行", "code": "600036"}]},
+    "bearish": {"directions": [], "sectors": [], "stocks": []},
+    "company_sina": [{"company": "某公司", "sentiment": "利空", "summary": "业绩预亏"}],
+    "top5_bullish": [{"title": "央行降准", "reason": "全面利好"}],
+}
+
+
+def test_build_prompt_contains_news_and_contract():
+    p = analyzer.build_analysis_prompt([{"title": "降准", "source": "xq", "content": "x"}], "2026年07月23日")
+    assert "降准" in p and "top20" in p and "company_sina" in p
+
+
+def test_parse_extracts_json_from_noise():
+    text = "以下是分析结果：\n" + json.dumps(PAYLOAD, ensure_ascii=False) + "\n完毕"
+    out = analyzer.parse_analysis_output(text)
+    assert out["top20"][0]["sentiment"] == "利好"
+
+
+def test_parse_raises_on_garbage():
+    with pytest.raises(ValueError):
+        analyzer.parse_analysis_output("没有任何 JSON")
+
+
+def test_run_analysis_saves_snapshot():
+    conn = db.get_conn(":memory:"); db.init_db(conn)
+    db.upsert_news(conn, NewsItem(source="xq", title="央行降准", external_id="1"))
+    ok = analyzer.run_analysis({}, conn,
+                               runner=lambda prompt, cfg: json.dumps(PAYLOAD, ensure_ascii=False))
+    assert ok is True
+    assert db.latest_analysis(conn)["top5_bullish"][0]["title"] == "央行降准"
+
+
+def test_run_analysis_records_failure():
+    conn = db.get_conn(":memory:"); db.init_db(conn)
+    def bad_runner(prompt, cfg):
+        raise RuntimeError("cli down")
+    assert analyzer.run_analysis({}, conn, runner=bad_runner) is False
+    row = conn.execute("SELECT status FROM analysis_runs ORDER BY id DESC LIMIT 1").fetchone()
+    assert row[0] == "error"
+```
+
+- [ ] **Step 2: 运行测试确认失败**
+
+Run: `uv run pytest tests/test_analyzer.py -v`
+Expected: FAIL（`ModuleNotFoundError`）
+
+- [ ] **Step 3: 写实现**
+
+Create `ainews/analyzer.py`:
+```python
+"""Claude 批量分析：当日新闻 → Top20/利好利空/公司归类/Top5 洞察快照。"""
+import datetime
+import json
+import logging
+import re
+import subprocess
+
+from ainews import db
+
+logger = logging.getLogger(__name__)
+
+_CONTRACT = """{
+  "top20": [{"title": "...", "source": "...", "importance": 0-100,
+             "sentiment": "利好|利空|中性", "sectors": ["..."],
+             "stocks": [{"name": "...", "code": "..."}], "reason": "一句影响判断"}],
+  "bullish": {"directions": ["..."], "sectors": ["..."], "stocks": [{"name": "...", "code": "..."}]},
+  "bearish": {"directions": ["..."], "sectors": ["..."], "stocks": [{"name": "...", "code": "..."}]},
+  "company_sina": [{"company": "...", "sentiment": "利好|利空", "summary": "..."}],
+  "top5_bullish": [{"title": "...", "reason": "..."}]
+}"""
+
+
+def build_analysis_prompt(items: list[dict], date_cn: str) -> str:
+    news_json = json.dumps(
+        [{"source": it.get("source", ""), "title": it.get("title", ""),
+          "content": (it.get("content") or "")[:200]} for it in items],
+        ensure_ascii=False)
+    return (
+        f"今天是{date_cn}。以下是今日抓取的财经新闻(JSON 数组)：\n{news_json}\n\n"
+        "请完成：\n"
+        "1. 综合影响力/重要性选出 top20（每条给 importance 0-100、sentiment、涉及板块 sectors、"
+        "涉及个股 stocks(名称+代码)、一句 reason）；\n"
+        "2. 归纳整体利好 bullish 与利空 bearish 的方向 directions、板块 sectors、个股 stocks；\n"
+        "3. 对 source 为 sina 的公司类资讯，按公司归类利好/利空，写入 company_sina；\n"
+        "4. 从利好中精选 top5_bullish 并给理由。\n\n"
+        f"只输出一个 JSON 对象（不要任何其他文字），结构如下：\n{_CONTRACT}"
+    )
+
+
+def parse_analysis_output(text: str) -> dict:
+    m = re.search(r"\{.*\}", text, re.DOTALL)
+    if not m:
+        raise ValueError("输出中未找到 JSON 对象")
+    return json.loads(m.group(0))
+
+
+def _default_runner(prompt: str, config: dict) -> str:
+    cmd = [config.get("claude_command", "claude"), "--print", prompt,
+           "--output-format", "text", "--dangerously-skip-permissions"]
+    result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
+                            timeout=config.get("timeout_seconds", 600))
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr.strip()[:500] or "claude CLI 非零退出")
+    return result.stdout
+
+
+def run_analysis(config: dict, conn, runner=None) -> bool:
+    runner = runner or _default_runner
+    started = datetime.datetime.now()
+    date_str = datetime.date.today().strftime("%Y-%m-%d")
+    date_cn = datetime.date.today().strftime("%Y年%m月%d日")
+    items = db.query_news(conn, date=date_str, limit=500)
+    if not items:  # 当天无数据退回最近 200 条
+        items = db.query_news(conn, limit=200)
+    if not items:
+        db.save_analysis_run(conn, started, "error", error="无新闻可分析")
+        return False
+    try:
+        raw = runner(build_analysis_prompt(items, date_cn), config)
+        payload = parse_analysis_output(raw)
+        db.save_analysis_run(conn, started, "ok", payload=payload)
+        logger.info("分析完成：top20=%d 条", len(payload.get("top20", [])))
+        return True
+    except Exception as e:
+        db.save_analysis_run(conn, started, "error", error=str(e)[:1000])
+        logger.warning("分析失败: %s", e)
+        return False
+```
+
+- [ ] **Step 4: 运行测试确认通过**
+
+Run: `uv run pytest tests/test_analyzer.py -v`
+Expected: PASS（5 passed）
+
+- [ ] **Step 5: 提交**
+
+```bash
+git add ainews/analyzer.py tests/test_analyzer.py
+git commit -m "feat: Claude 批量分析引擎(prompt/JSON 解析/快照落库)"
+```
+
+---
+
+### Task 14: 自选股匹配 + 风险 tag
+
+**Files:**
+- Create: `ainews/watch_match.py`
+- Test: `tests/test_watch_match.py`
+
+**Interfaces:**
+- Consumes: 洞察 payload dict（Task 13 契约）、`db.list_watch` 的行格式
+- Produces:
+  - `ainews.watch_match.annotate(payload: dict, watch: list[dict]) -> dict`——返回副本：top20 每条追加 `watch_hits: [{"code","name"}]`；顶层追加 `watch_related: [{"code","name","items":[{"title","sentiment"}]}]`
+
+- [ ] **Step 1: 写失败测试**
+
+Create `tests/test_watch_match.py`:
+```python
+from ainews.watch_match import annotate
+
+PAYLOAD = {"top20": [
+    {"title": "招商银行业绩超预期", "sentiment": "利好",
+     "stocks": [{"name": "招商银行", "code": "600036"}]},
+    {"title": "中芯产能受限", "sentiment": "利空",
+     "stocks": [{"name": "中芯国际", "code": "688981"}]},
+    {"title": "无关新闻", "sentiment": "中性", "stocks": []},
+]}
+WATCH = [{"code": "600036", "name": "招商银行", "aliases": ["招行"]}]
+
+
+def test_annotate_marks_hits_and_related():
+    out = annotate(PAYLOAD, WATCH)
+    assert out["top20"][0]["watch_hits"] == [{"code": "600036", "name": "招商银行"}]
+    assert out["top20"][1]["watch_hits"] == []
+    related = out["watch_related"]
+    assert len(related) == 1
+    assert related[0]["code"] == "600036"
+    assert related[0]["items"][0]["sentiment"] == "利好"
+
+
+def test_annotate_matches_alias_in_title():
+    payload = {"top20": [{"title": "招行获批新业务", "sentiment": "利好", "stocks": []}]}
+    out = annotate(payload, WATCH)
+    assert out["top20"][0]["watch_hits"][0]["code"] == "600036"
+
+
+def test_annotate_empty_watch_noop():
+    out = annotate(PAYLOAD, [])
+    assert out["watch_related"] == []
+```
+
+- [ ] **Step 2: 运行测试确认失败**
+
+Run: `uv run pytest tests/test_watch_match.py -v`
+Expected: FAIL（`ModuleNotFoundError`）
+
+- [ ] **Step 3: 写实现**
+
+Create `ainews/watch_match.py`:
+```python
+"""自选股与洞察的文本匹配：命中 name/code/alias 即挂 watch tag。"""
+import copy
+
+
+def _hit(entry_stocks: list[dict], title: str, w: dict) -> bool:
+    needles = [w["name"], w["code"], *w.get("aliases", [])]
+    for s in entry_stocks:
+        if s.get("code") == w["code"] or s.get("name") == w["name"]:
+            return True
+    return any(n and n in title for n in needles)
+
+
+def annotate(payload: dict, watch: list[dict]) -> dict:
+    out = copy.deepcopy(payload)
+    related: dict[str, dict] = {}
+    for entry in out.get("top20", []):
+        hits = []
+        for w in watch:
+            if _hit(entry.get("stocks", []), entry.get("title", ""), w):
+                hits.append({"code": w["code"], "name": w["name"]})
+                rel = related.setdefault(w["code"], {"code": w["code"], "name": w["name"], "items": []})
+                rel["items"].append({"title": entry.get("title", ""),
+                                     "sentiment": entry.get("sentiment", "中性")})
+        entry["watch_hits"] = hits
+    out["watch_related"] = list(related.values())
+    return out
+```
+
+- [ ] **Step 4: 运行测试确认通过**
+
+Run: `uv run pytest tests/test_watch_match.py -v`
+Expected: PASS（3 passed）
+
+- [ ] **Step 5: 提交**
+
+```bash
+git add ainews/watch_match.py tests/test_watch_match.py
+git commit -m "feat: 自选股匹配与风险标注"
+```
+
+---
+
+### Task 15: 洞察页 + 自选股页
+
+**Files:**
+- Modify: `ainews/web.py`
+- Create: `ainews/templates/insights.html`
+- Create: `ainews/templates/watchlist.html`
+- Modify: `ainews/templates/base.html`（顶栏加导航）
+- Modify: `ainews/static/style.css`（tag 样式）
+- Test: `tests/test_web_insights.py`
+
+**Interfaces:**
+- Consumes: `db.latest_analysis / list_watch / add_watch / remove_watch`、`watch_match.annotate`
+- Produces: 路由 `GET /insights`、`GET /watchlist`、`POST /watchlist/add`（form: code,name,aliases 逗号分隔）、`POST /watchlist/remove`（form: code）
+
+- [ ] **Step 1: 写失败测试**
+
+Create `tests/test_web_insights.py`:
+```python
+from fastapi.testclient import TestClient
+from ainews import db, web
+from ainews.cache import QueryCache
+
+
+def _setup():
+    conn = db.get_conn(":memory:")
+    db.init_db(conn)
+    db.save_analysis_run(conn, __import__("datetime").datetime.now(), "ok", payload={
+        "top20": [{"title": "招商银行业绩超预期", "source": "xq", "importance": 90,
+                   "sentiment": "利好", "sectors": ["银行"],
+                   "stocks": [{"name": "招商银行", "code": "600036"}], "reason": "超预期"}],
+        "bullish": {"directions": ["宽松"], "sectors": ["银行"], "stocks": []},
+        "bearish": {"directions": [], "sectors": [], "stocks": []},
+        "company_sina": [], "top5_bullish": [{"title": "招商银行业绩超预期", "reason": "确定性"}],
+    })
+    db.add_watch(conn, "600036", "招商银行")
+    app = web.create_app(lambda: conn, QueryCache(ttl=1))
+    return TestClient(app), conn
+
+
+def test_insights_renders_top20_and_tags():
+    client, _ = _setup()
+    r = client.get("/insights")
+    assert r.status_code == 200
+    assert "招商银行业绩超预期" in r.text
+    assert "利好" in r.text          # 情感 tag
+    assert "自选" in r.text          # 自选股命中标记
+
+
+def test_watchlist_page_and_add_remove():
+    client, conn = _setup()
+    r = client.get("/watchlist")
+    assert "招商银行" in r.text
+    r = client.post("/watchlist/add", data={"code": "688981", "name": "中芯国际", "aliases": "中芯"},
+                    follow_redirects=True)
+    assert "中芯国际" in r.text
+    r = client.post("/watchlist/remove", data={"code": "688981"}, follow_redirects=True)
+    assert "中芯国际" not in r.text
+```
+
+- [ ] **Step 2: 运行测试确认失败**
+
+Run: `uv run pytest tests/test_web_insights.py -v`
+Expected: FAIL（404，路由不存在）
+
+- [ ] **Step 3: 写实现**
+
+Modify `ainews/web.py` —— `create_app` 内追加（`Form` 从 fastapi 导入，`RedirectResponse` 从 fastapi.responses 导入，顶部 `from ainews.watch_match import annotate`）:
+```python
+    @app.get("/insights", response_class=HTMLResponse)
+    def insights(request: Request):
+        def producer():
+            payload = db.latest_analysis(conn_factory())
+            if not payload:
+                return None
+            return annotate(payload, db.list_watch(conn_factory()))
+        data = cache.get_or_set("insights", producer)
+        return templates.TemplateResponse("insights.html",
+                                          {"request": request, "data": data})
+
+    @app.get("/watchlist", response_class=HTMLResponse)
+    def watchlist_page(request: Request):
+        conn = conn_factory()
+        payload = db.latest_analysis(conn)
+        related = annotate(payload, db.list_watch(conn))["watch_related"] if payload else []
+        return templates.TemplateResponse("watchlist.html", {
+            "request": request, "watch": db.list_watch(conn), "related": related})
+
+    @app.post("/watchlist/add")
+    def watchlist_add(code: str = Form(...), name: str = Form(...), aliases: str = Form("")):
+        alias_list = [a.strip() for a in aliases.split(",") if a.strip()]
+        db.add_watch(conn_factory(), code.strip(), name.strip(), alias_list)
+        return RedirectResponse("/watchlist", status_code=303)
+
+    @app.post("/watchlist/remove")
+    def watchlist_remove(code: str = Form(...)):
+        db.remove_watch(conn_factory(), code.strip())
+        return RedirectResponse("/watchlist", status_code=303)
+```
+
+Modify `ainews/templates/base.html` 顶栏（`<h1>` 后加导航）:
+```html
+  <nav class="nav">
+    <a href="/">新闻流</a><a href="/insights">当日洞察</a><a href="/watchlist">自选股</a>
+  </nav>
+```
+
+Create `ainews/templates/insights.html`:
+```html
+{% extends "base.html" %}
+{% block content %}
+{% if not data %}<p class="empty">暂无分析结果（等待 08:00/12:00 定时分析或手动运行 analyze）</p>
+{% else %}
+<section class="panel">
+  <h2>🔥 Top5 利好</h2>
+  <ol>{% for t in data.top5_bullish %}<li><b>{{ t.title }}</b> — {{ t.reason }}</li>{% endfor %}</ol>
+</section>
+<section class="panel-row">
+  <div class="panel good"><h2>📈 利好</h2>
+    <p>方向：{{ data.bullish.directions | join('、') }}</p>
+    <p>板块：{{ data.bullish.sectors | join('、') }}</p>
+    <p>个股：{% for s in data.bullish.stocks %}{{ s.name }}({{ s.code }}) {% endfor %}</p></div>
+  <div class="panel bad"><h2>📉 利空</h2>
+    <p>方向：{{ data.bearish.directions | join('、') }}</p>
+    <p>板块：{{ data.bearish.sectors | join('、') }}</p>
+    <p>个股：{% for s in data.bearish.stocks %}{{ s.name }}({{ s.code }}) {% endfor %}</p></div>
+</section>
+<section class="panel"><h2>📋 Top20 要闻</h2>
+<ul class="news-list">
+  {% for it in data.top20 %}
+  <li class="news-card">
+    <div class="meta"><span class="src">{{ it.source }}</span>
+      <span class="tag {{ 'tag-good' if it.sentiment == '利好' else 'tag-bad' if it.sentiment == '利空' else 'tag-neutral' }}">{{ it.sentiment }}</span>
+      {% for h in it.watch_hits %}<span class="tag tag-watch">自选·{{ h.name }}</span>{% endfor %}
+      <span class="imp">影响 {{ it.importance }}</span></div>
+    <div class="title">{{ it.title }}</div>
+    <p class="content">{{ it.reason }} ｜ 板块：{{ it.sectors | join('、') }}
+      {% if it.stocks %}｜ 个股：{% for s in it.stocks %}{{ s.name }} {% endfor %}{% endif %}</p>
+  </li>{% endfor %}
+</ul></section>
+{% if data.company_sina %}
+<section class="panel"><h2>🏢 公司资讯（新浪）</h2>
+<ul>{% for c in data.company_sina %}
+  <li><span class="tag {{ 'tag-good' if c.sentiment == '利好' else 'tag-bad' }}">{{ c.sentiment }}</span>
+      <b>{{ c.company }}</b> — {{ c.summary }}</li>{% endfor %}</ul></section>
+{% endif %}
+{% endif %}
+{% endblock %}
+```
+
+Create `ainews/templates/watchlist.html`:
+```html
+{% extends "base.html" %}
+{% block content %}
+<section class="panel"><h2>⭐ 我的自选股</h2>
+<form class="filters" method="post" action="/watchlist/add">
+  <input name="code" placeholder="代码" required>
+  <input name="name" placeholder="名称" required>
+  <input name="aliases" placeholder="别名(逗号分隔)">
+  <button type="submit">添加</button>
+</form>
+<ul>{% for w in watch %}
+  <li>{{ w.name }}（{{ w.code }}）
+    <form method="post" action="/watchlist/remove" style="display:inline">
+      <input type="hidden" name="code" value="{{ w.code }}"><button>删除</button></form>
+  </li>{% else %}<li class="empty">暂无自选股</li>{% endfor %}</ul></section>
+<section class="panel"><h2>🔔 自选股相关消息</h2>
+<ul>{% for r in related %}
+  <li><b>{{ r.name }}</b>
+    <ul>{% for it in r.items %}
+      <li><span class="tag {{ 'tag-good' if it.sentiment == '利好' else 'tag-bad' if it.sentiment == '利空' else 'tag-neutral' }}">{{ it.sentiment }}</span>{{ it.title }}</li>
+    {% endfor %}</ul></li>
+  {% else %}<li class="empty">暂无关联消息</li>{% endfor %}</ul></section>
+{% endblock %}
+```
+
+Modify `ainews/static/style.css` 末尾追加:
+```css
+.nav { display: flex; gap: 14px; margin-top: 6px; }
+.nav a { color: #fff; opacity: .85; text-decoration: none; font-size: 14px; }
+.panel { background: #fff; border-radius: 12px; padding: 16px; margin-bottom: 12px;
+  box-shadow: 0 1px 3px rgba(0,0,0,.06); }
+.panel h2 { font-size: 16px; margin-bottom: 10px; }
+.panel-row { display: grid; grid-template-columns: 1fr; gap: 12px; margin-bottom: 12px; }
+@media (min-width: 768px) { .panel-row { grid-template-columns: 1fr 1fr; } }
+.tag { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; }
+.tag-good { background: #e6f7ec; color: #16803c; }
+.tag-bad { background: #fdeaea; color: #b91c1c; }
+.tag-neutral { background: #eef0f3; color: #666; }
+.tag-watch { background: #fff7e0; color: #b45309; }
+.imp { font-size: 12px; color: #888; }
+.filters button { padding: 8px 14px; border: 0; border-radius: 8px;
+  background: #b91c1c; color: #fff; }
+```
+
+- [ ] **Step 4: 运行测试确认通过（含全量回归）**
+
+Run: `uv run pytest -v`
+Expected: 全部 PASS
+
+- [ ] **Step 5: 提交**
+
+```bash
+git add ainews/web.py ainews/templates/ ainews/static/style.css tests/test_web_insights.py
+git commit -m "feat: 当日洞察页 + 自选股管理页(风险 tag)"
+```
+
+---
+
+### Task 16: 分析定时接入 + CLI analyze
+
+**Files:**
+- Modify: `ainews/scheduler.py`
+- Modify: `ainews/app.py`
+- Modify: `ainews/cli.py`
+- Modify: `config.json`（新增 `"analysis_times": ["08:00", "12:00"]`）
+- Test: `tests/test_scheduler_analysis.py`
+
+**Interfaces:**
+- Modify: `ainews.scheduler.start_scheduler(conn_factory, sources, stop_event=None, analysis_job=None, analysis_times=None)`（analysis_job 为无参 callable，在每个 analysis_times 每日执行）
+- Produces: CLI 子命令 `analyze`（立即跑一次分析，成功 exit 0）
+
+- [ ] **Step 1: 写失败测试**
+
+Create `tests/test_scheduler_analysis.py`:
+```python
+import schedule as schedule_lib
+from ainews import scheduler
+
+
+def test_analysis_times_registered(monkeypatch):
+    schedule_lib.clear()
+    monkeypatch.setattr("ainews.pipeline.run_all", lambda conn, s: [])
+    called = []
+    import threading
+    stop = threading.Event(); stop.set()  # 立即退出循环，只验证注册
+    scheduler.start_scheduler(lambda: None, [], stop_event=stop,
+                              analysis_job=lambda: called.append(1),
+                              analysis_times=["08:00", "12:00"])
+    daily = [j for j in schedule_lib.get_jobs() if j.at_time is not None]
+    assert len(daily) == 2
+    schedule_lib.clear()
+```
+
+- [ ] **Step 2: 运行测试确认失败**
+
+Run: `uv run pytest tests/test_scheduler_analysis.py -v`
+Expected: FAIL（`TypeError: start_scheduler() got an unexpected keyword argument 'analysis_job'`）
+
+- [ ] **Step 3: 写实现**
+
+Modify `ainews/scheduler.py` 的 `start_scheduler`:
+```python
+def start_scheduler(conn_factory, sources: list[dict], stop_event=None,
+                    analysis_job=None, analysis_times=None) -> None:
+    for s in sources:
+        interval = int(s.get("poll_interval", 300))
+        schedule.every(interval).seconds.do(
+            lambda cfg=s: pipeline.run_source(conn_factory(), cfg))
+    if analysis_job and analysis_times:
+        for t in analysis_times:
+            schedule.every().day.at(t).do(analysis_job)
+    # 启动即先跑一轮抓取
+    pipeline.run_all(conn_factory(), sources)
+    logger.info("调度器启动，%d 个源，%d 个分析定时点",
+                len(sources), len(analysis_times or []) if analysis_job else 0)
+    while stop_event is None or not stop_event.is_set():
+        schedule.run_pending()
+        time.sleep(1)
+```
+
+Modify `ainews/app.py` 的 `build_app`（调度线程 args 扩展；顶部 `from ainews import analyzer`）:
+```python
+    if config.get("scheduler_enabled", True) and sources:
+        analysis_times = config.get("analysis_times", ["08:00", "12:00"])
+        t = threading.Thread(
+            target=scheduler.start_scheduler,
+            args=(conn_factory, sources),
+            kwargs={"analysis_job": lambda: analyzer.run_analysis(config, conn_factory()),
+                    "analysis_times": analysis_times},
+            daemon=True)
+        t.start()
+```
+
+Modify `ainews/cli.py`：`sub.add_parser("push", ...)` 之后加：
+```python
+    sub.add_parser("analyze", help="立即跑一次 Claude 批量分析")
+```
+`main` 分派处加：
+```python
+    if args.cmd == "analyze":
+        from ainews import analyzer
+        conn = _open_conn()
+        db.init_db(conn)
+        ok = analyzer.run_analysis(_load_config(), conn)
+        print("分析完成" if ok else "分析失败，详见 analysis_runs 表")
+        return 0 if ok else 1
+```
+
+Modify `config.json`：加 `"analysis_times": ["08:00", "12:00"]`。
+
+- [ ] **Step 4: 运行测试确认通过（含全量回归）**
+
+Run: `uv run pytest -v`
+Expected: 全部 PASS
+
+- [ ] **Step 5: 提交**
+
+```bash
+git add ainews/scheduler.py ainews/app.py ainews/cli.py config.json tests/test_scheduler_analysis.py
+git commit -m "feat: 分析定时(08:00/12:00) + CLI analyze 子命令"
+```
+
+---
+
+### Task 17: 收尾——合并 + 推送 GitHub
+
+**Files:**
+- Modify: `config.json`（确认 `feishu_app_secret` 已清空，值迁 `.env`）
+- 无代码变更，纯 git 操作。
+
+**前置安全步骤（MUST，推送前）：**
+1. 确认工作区 `config.json` 不再含真实 secret（Task 1 已迁 `.env`）。
+2. **历史泄露处理**：`feishu_app_secret` 已存在于历史 commit。推送公共仓库前二选一（问 Human）：
+   - a) 提醒 Human 去飞书后台**轮换 app_secret**（推荐，最简单可靠）；
+   - b) `git filter-repo` 重写历史抹除该值（重写会改所有 commit hash）。
+
+- [ ] **Step 1: 全量测试 + 端到端验证**
+
+Run: `uv run pytest -v` → 全部 PASS
+Run: `uv run python -m ainews.cli serve` → 手机/iPad/PC 宽度检查三个页面。
+
+- [ ] **Step 2: 合并到 main 并推送**
+
+```bash
+git config user.email "homcto@gmail.com"
+git checkout master
+git merge feature/ai-news-redesign --no-ff -m "merge: ai-news 重设计(抓取/分类/存储/展示/分析/自选股)"
+git branch -M main
+git remote add origin https://github.com/Jawf/ai-news.git
+git push -u origin main
+```
+Expected: push 成功，GitHub 仓库可见 main 分支。
+
+---
+
+## Phase 2 Self-Review
+
+- 当日 Top20 汇总 → Task 13 契约 `top20` + Task 15 渲染 ✅
+- 利好/利空 方向+板块+个股归类 → 契约 `bullish`/`bearish` + 洞察页双栏 ✅
+- 新浪公司资讯利好/利空归类 → 契约 `company_sina` + prompt 第 3 条 + 洞察页公司段 ✅
+- Top5 利好 → 契约 `top5_bullish` + 洞察页置顶 ✅
+- 自选股（本地表 + Web 增删）→ Task 12 watchlist + Task 15 页面 ✅
+- 自选股关联 + 风险 tag → Task 14 annotate + tag-good/tag-bad/tag-watch 样式 ✅
+- 每日 08:00/12:00 批量分析 → Task 16 ✅
+- 推送 GitHub(homcto@gmail.com, main) → Task 17（含 secret 历史泄露处理）✅
+- 类型一致性：`save_analysis_run/latest_analysis/add_watch/remove_watch/list_watch`（12→13/15）、`annotate`（14→15）、`run_analysis`（13→16）、`start_scheduler` 新签名（16）已核对一致。
+
 ## Self-Review
 
 **Spec 覆盖检查：**
