@@ -1,4 +1,3 @@
-import os
 import textwrap
 from ainews import config
 
@@ -29,3 +28,12 @@ def test_load_config_env_overrides_secret(tmp_path, monkeypatch):
     cfg = config.load_config(str(p))
     assert cfg["feishu_app_secret"] == "from_env"
     assert cfg["feishu_chat_id"] == "ou_x"
+
+
+def test_load_config_reads_secret_from_dotenv(tmp_path, monkeypatch):
+    monkeypatch.delenv("FEISHU_APP_SECRET", raising=False)
+    p = tmp_path / "config.json"
+    p.write_text('{"feishu_app_secret": "", "feishu_chat_id": "ou_x"}', encoding="utf-8")
+    (tmp_path / ".env").write_text("FEISHU_APP_SECRET=from_dotenv\n", encoding="utf-8")
+    cfg = config.load_config(str(p))
+    assert cfg["feishu_app_secret"] == "from_dotenv"
