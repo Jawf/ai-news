@@ -24,10 +24,20 @@
 | 访问场景 | **局域网多设备访问** | 服务监听 `0.0.0.0`，同 WiFi 设备浏览器访问 |
 | 分类方式 | **规则关键词分类** | 可配置「关键词→类目」表，离线、可解释 |
 
-## 已知风险 / 待实现期确认
+## 抓包实测结论（2026-07-24 确认，取代原 JSON 假设）
 
-- **tushare.pro/news 内部接口的确切形态未确认**：该网页背后很可能调用需登录 session/token 的后端。实现期必须用浏览器 devtools 抓包，确认 endpoint、请求参数、必要的 cookie/token 与响应 JSON 结构。抓取层设计为「配置驱动的源适配器」，用于吸收抓包得到的任意结构；在确认前不臆造接口。
-- 若逆向接口不可持续（反爬 / 需登录态难维护），回退选项为「直接抓源站」或「改用官方 API」，届时只需替换 `sources.yaml` 中该源的适配配置。
+浏览器实测查明 tushare.pro/news 的真实形态，与最初"内部 JSON 接口"假设不同：
+
+- **服务端渲染 HTML，非 JSON 接口**：`tushare.pro/news/{src}`（xq/sina/...）直接返回含新闻的 HTML。结构：容器 `div.news_data.cur` → 条目 `div.news_item` → `div.news_datetime`（仅 `HH:MM`）+ `div.news_content`（正文）。一次约 1000 条当日快讯，无分页、无独立 JSON 端点。
+- **必须携带登录 cookie**：带登录态（cookie `uid`+`username`）返回真实新闻；游客访问只得 Vue 骨架页。抓取程序必须带 tushare 登录 cookie。
+- **每条仅 时间 + 正文**：无独立标题、无原文 URL、无源侧 id（正文内【】前缀为标题式）。
+
+**据此确定的抓取实现（用户已批准）**：
+
+- 抓取器扩展支持 `type: html` 源，用 CSS 选择器解析（非 JSONPath）。JSON 适配路径保留、向后兼容。
+- HTML 源的 `NewsItem` 映射：`title` = news_content 全文；`content` = 空（快讯即一句话）；`published_at` = 当天日期 + HH:MM；`url`/`external_id` = 空 → `content_hash` 回退 `source|title|published_at` 去重。
+- 认证：登录 cookie 存本机 `.env` 的 `TUSHARE_COOKIE`（gitignore，过期手动更新）；`sources.yaml` 的 headers 用 `${TUSHARE_COOKIE}` 占位，运行时从环境注入。
+- 回退：cookie 维护不可持续时，可切「直接抓源站」或「官方 API」，只改 `sources.yaml` 该源配置。
 
 ## 总体架构
 
