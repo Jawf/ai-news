@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block content %}
+{% if not data %}<p class="empty">暂无分析结果（等待 08:00/12:00 定时分析或手动运行 analyze）</p>
+{% else %}
+<section class="panel">
+  <h2>🔥 Top5 利好</h2>
+  <ol>{% for t in data.top5_bullish %}<li><b>{{ t.title }}</b> — {{ t.reason }}</li>{% endfor %}</ol>
+</section>
+<section class="panel-row">
+  <div class="panel good"><h2>📈 利好</h2>
+    <p>方向：{{ data.bullish.directions | join('、') }}</p>
+    <p>板块：{{ data.bullish.sectors | join('、') }}</p>
+    <p>个股：{% for s in data.bullish.stocks %}{{ s.name }}({{ s.code }}) {% endfor %}</p></div>
+  <div class="panel bad"><h2>📉 利空</h2>
+    <p>方向：{{ data.bearish.directions | join('、') }}</p>
+    <p>板块：{{ data.bearish.sectors | join('、') }}</p>
+    <p>个股：{% for s in data.bearish.stocks %}{{ s.name }}({{ s.code }}) {% endfor %}</p></div>
+</section>
+<section class="panel"><h2>📋 Top20 要闻</h2>
+<ul class="news-list">
+  {% for it in data.top20 %}
+  <li class="news-card">
+    <div class="meta"><span class="src">{{ it.source }}</span>
+      <span class="tag {{ 'tag-good' if it.sentiment == '利好' else 'tag-bad' if it.sentiment == '利空' else 'tag-neutral' }}">{{ it.sentiment }}</span>
+      {% for h in it.watch_hits %}<span class="tag tag-watch">自选·{{ h.name }}</span>{% endfor %}
+      <span class="imp">影响 {{ it.importance }}</span></div>
+    <div class="title">{{ it.title }}</div>
+    <p class="content">{{ it.reason }} ｜ 板块：{{ it.sectors | join('、') }}
+      {% if it.stocks %}｜ 个股：{% for s in it.stocks %}{{ s.name }} {% endfor %}{% endif %}</p>
+  </li>{% endfor %}
+</ul></section>
+{% if data.company_sina %}
+<section class="panel"><h2>🏢 公司资讯（新浪）</h2>
+<ul>{% for c in data.company_sina %}
+  <li><span class="tag {{ 'tag-good' if c.sentiment == '利好' else 'tag-bad' }}">{{ c.sentiment }}</span>
+      <b>{{ c.company }}</b> — {{ c.summary }}</li>{% endfor %}</ul></section>
+{% endif %}
+{% endif %}
+{% endblock %}

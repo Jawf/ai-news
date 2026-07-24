@@ -19,3 +19,18 @@ main { max-width: 1200px; margin: 0 auto; padding: 12px; }
 @media (min-width: 768px) { .news-list { grid-template-columns: 1fr 1fr; } }
 /* PC 多列 */
 @media (min-width: 1100px) { .news-list { grid-template-columns: 1fr 1fr 1fr; } }
+.nav { display: flex; gap: 14px; margin-top: 6px; }
+.nav a { color: #fff; opacity: .85; text-decoration: none; font-size: 14px; }
+.panel { background: #fff; border-radius: 12px; padding: 16px; margin-bottom: 12px;
+  box-shadow: 0 1px 3px rgba(0,0,0,.06); }
+.panel h2 { font-size: 16px; margin-bottom: 10px; }
+.panel-row { display: grid; grid-template-columns: 1fr; gap: 12px; margin-bottom: 12px; }
+@media (min-width: 768px) { .panel-row { grid-template-columns: 1fr 1fr; } }
+.tag { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; }
+.tag-good { background: #e6f7ec; color: #16803c; }
+.tag-bad { background: #fdeaea; color: #b91c1c; }
+.tag-neutral { background: #eef0f3; color: #666; }
+.tag-watch { background: #fff7e0; color: #b45309; }
+.imp { font-size: 12px; color: #888; }
+.filters button { padding: 8px 14px; border: 0; border-radius: 8px;
+  background: #b91c1c; color: #fff; }
