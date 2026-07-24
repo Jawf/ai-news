@@ -1,16 +1,15 @@
 ﻿# 📰 财经新闻 Job 管理器
 
-每日自动收集 Top 10 财经新闻，通过飞书推送给团队。
+按配置源周期性抓取财经新闻，提供 Web 新闻流浏览，并可按需将 Top-N 推送到飞书。
 
 ---
 
 ## 功能概览
 
-- **Windows GUI 管理界面**：实时查看调度状态、执行历史、运行日志
-- **定时任务调度**：默认每天 08:00 自动执行，时间可在界面调整
-- **多平台新闻采集**：调用 Claude Code CLI，用 WebSearch 覆盖 Bloomberg、Reuters、财联社、东方财富、证券时报、第一财经等主流平台
-- **AI 对比筛选**：Claude 综合热度、影响力、时效性，提炼出当日 Top 10 财经新闻
-- **飞书自动推送**：通过 `nanobot agent` 将格式化新闻发送到指定飞书群
+- **Web 新闻流**：FastAPI 提供服务端渲染页面 + JSON API，局域网内可访问
+- **后台调度采集**：按 `sources.yaml` 各源 `poll_interval` 周期性抓取，失败隔离不影响其他源
+- **TTL 查询缓存**：新闻列表查询带缓存，降低重复请求压力
+- **飞书推送**：从库中选 Top-N 新闻，格式化后推送到指定飞书群
 
 ---
 
@@ -20,12 +19,12 @@
 ai-news/
 ├── pyproject.toml      # uv 项目配置与依赖声明
 ├── .venv/              # uv 自动创建的虚拟环境
-├── main.py             # GUI 管理界面 + 内置调度器
-├── job_runner.py       # Claude CLI 任务执行逻辑
-├── run_once.py         # 无 GUI 单次执行脚本
-├── config.json         # 运行配置（时间、chat_id、prompt 模板等）
+├── ainews/             # 核心包：config/db/fetcher/pipeline/scheduler/web/app/cli
+├── job_runner.py       # 飞书发送逻辑（push 模块复用其 send_news）
+├── run_once.py         # 无 GUI 单次抓取入口（等价于 `ainews.cli fetch-once`）
+├── config.json         # 运行配置（飞书凭证、cache_ttl、scheduler_enabled 等）
+├── sources.yaml        # 新闻源适配配置
 ├── install.bat         # 一键安装脚本
-├── start.bat           # 启动 GUI
 └── logs/               # 运行日志，按日期自动创建
     └── job_YYYYMMDD.log
 ```
@@ -38,8 +37,7 @@ ai-news/
 |------|------|
 | [uv](https://github.com/astral-sh/uv) | Python 包管理器，替代 pip/venv |
 | Python 3.12+ | 由 uv 自动管理 |
-| [Claude Code CLI](https://github.com/anthropics/claude-code) | AI 执行新闻采集与发送 |
-| [nanobot](https://github.com/nanobot-ai/nanobot) | 飞书消息推送工具 |
+| [nanobot](https://github.com/nanobot-ai/nanobot)（可选） | `push` 命令优先走 nanobot 发送，未安装时自动回退飞书 Open API |
 
 ---
 
@@ -61,48 +59,31 @@ uv sync
 
 脚本会自动检查 Claude CLI 和 nanobot 是否可用。
 
-### 3. 启动 GUI 管理器
-
-双击 `start.bat`，或执行：
+### 3. 启动 Web 服务 + 后台调度
 
 ```bash
-uv run python main.py
+uv run python -m ainews.cli serve --port 8000
 ```
 
-### 4. 手动触发单次执行（无 GUI）
+浏览器访问 `http://127.0.0.1:8000/` 查看新闻流；局域网内其他设备访问 `http://<本机IP>:8000`（本机 IP 用 `ipconfig` 查看）。`serve` 启动的同时会按 `sources.yaml` 各源 `poll_interval` 在后台线程周期抓取（`config.json` 的 `scheduler_enabled` 可关闭）。
+
+### 4. 手动触发单次抓取（无需常驻服务）
 
 ```bash
+uv run python -m ainews.cli fetch-once
+# 或等价的：
 uv run python run_once.py
 ```
 
-适合配合 **Windows 任务计划程序** 使用，无需保持 GUI 常驻。
+适合配合 **Windows 任务计划程序** 使用，无需保持 `serve` 常驻。
 
----
+### 5. 推送 Top-N 新闻到飞书
 
-## GUI 界面说明
-
-```
-┌─ 任务状态 ──────────────────────────────────────────┐
-│  调度状态: ● 运行中 (每天 08:00)   任务状态: 空闲    │
-│  下次执行: 2026-03-21 08:00:00                       │
-│  上次执行: 2026-03-20 08:00:02     ✓ 成功  累计: 5次 │
-└──────────────────────────────────────────────────────┘
-┌─ 设置 ───────────────────────────────────────────────┐
-│  执行时间: [08]:[00]    飞书 Chat ID: [ou_xxx...]     │
-│  [保存设置]                                           │
-└──────────────────────────────────────────────────────┘
-[ ▶ 立即运行 ]  [ ⏸ 暂停定时 ]  [ 🗑 清除日志 ]
-┌─ 执行日志 ───────────────────────────────────────────┐
-│  实时显示 Claude 执行过程与输出                       │
-└──────────────────────────────────────────────────────┘
+```bash
+uv run python -m ainews.cli push -n 10
 ```
 
-| 按钮 | 功能 |
-|------|------|
-| 立即运行 | 忽略定时，立刻触发一次采集任务 |
-| 暂停/开启定时 | 切换定时调度的开关 |
-| 清除日志 | 清空界面日志显示区（不影响日志文件） |
-| 保存设置 | 保存执行时间和飞书 chat_id，立即生效 |
+从库中选当日（或最近）Top-N 新闻，格式化后推送到 `config.json` 配置的飞书群。
 
 ---
 
@@ -110,56 +91,39 @@ uv run python run_once.py
 
 ```json
 {
-  "schedule_time": "08:00",
-  "schedule_enabled": true,
   "feishu_chat_id": "ou_bfba0b2292e6c00566bcbc688af36fbe",
-  "claude_command": "claude",
-  "timeout_seconds": 600,
-  "log_max_lines": 1000,
-  "claude_prompt_template": "..."
+  "feishu_webhook_url": "",
+  "feishu_app_id": "cli_a93dca5ea08d9cc1",
+  "feishu_app_secret": "",
+  "cache_ttl": 45,
+  "scheduler_enabled": true
 }
 ```
 
 | 字段 | 说明 |
 |------|------|
-| `schedule_time` | 每日定时执行时间，格式 `HH:MM` |
-| `schedule_enabled` | 启动时是否自动开启调度 |
-| `feishu_chat_id` | 飞书目标群的 chat_id |
-| `claude_command` | claude CLI 命令名，默认 `claude` |
-| `timeout_seconds` | 单次任务超时时间（秒），默认 600 |
-| `log_max_lines` | 界面日志最大保留行数 |
-| `claude_prompt_template` | 发给 Claude 的 prompt，支持 `{date}`、`{chat_id}` 占位符 |
+| `feishu_chat_id` | 飞书目标群/用户的 chat_id（`push` 推送用） |
+| `feishu_webhook_url` | 飞书自定义机器人 webhook（可选，nanobot 失败时的 API 兜底方式之一） |
+| `feishu_app_id` / `feishu_app_secret` | 飞书企业自建应用凭证（可选，另一种 API 兜底方式）；`FEISHU_APP_SECRET` 环境变量优先于本字段 |
+| `cache_ttl` | Web 新闻流查询缓存 TTL（秒），默认 45 |
+| `scheduler_enabled` | `serve` 启动时是否开启后台周期抓取，默认 `true` |
 
 ---
 
-## 任务执行流程
+## 数据流程
 
 ```
-定时触发 / 手动点击
+sources.yaml（各源 endpoint + JSONPath 映射）
         │
         ▼
-  调用 Claude CLI
-  claude --print "<prompt>" \
-         --allowedTools "WebSearch,Bash" \
-         --dangerously-skip-permissions
+  ainews.pipeline.run_all
+  逐源抓取 → 分类 → 去重入库 news.db
+  （单源失败不影响其他源）
         │
-        ▼
-  Claude 第一步：WebSearch
-  搜索各平台今日财经新闻
-  (Bloomberg / Reuters / 财联社 /
-   东方财富 / 证券时报 / 第一财经 ...)
+        ├─▶ serve：FastAPI 页面 + /api/news（TTL 缓存）
         │
-        ▼
-  Claude 第二步：对比筛选
-  按热度、影响力、时效性
-  提炼 Top 10 财经新闻
-        │
-        ▼
-  Claude 第三步：Bash 执行推送
-  nanobot push feishu ou_xxx "<Top 10 内容>"
-        │
-        ▼
-  记录执行结果到 state.json 和日志
+        └─▶ push：选当日 Top-N → 格式化 → 飞书
+              （优先 nanobot，失败回退飞书 Open API/webhook）
 ```
 
 ---
@@ -183,34 +147,28 @@ uv run python run_once.py
 
 ---
 
-## 日志文件
+## 日志
 
-每次执行的详细日志保存在 `logs/job_YYYYMMDD.log`，包含：
+`ainews.cli` 通过 Python `logging` 输出到标准输出（抓取进度、调度、推送结果）。`logs/` 目录为历史遗留，当前 CLI 不再写入按日期命名的日志文件；如需持久化日志，可自行重定向标准输出，如：
 
-- 任务启动时间
-- Claude CLI 调用命令
-- Claude 完整输出
-- 执行耗时与成功/失败状态
+```bash
+uv run python -m ainews.cli fetch-once >> logs/fetch.log 2>&1
+```
 
 ---
 
 ## 常见问题
 
-**Q: 启动报错 `找不到 claude 命令`**
-```bash
-npm install -g @anthropic-ai/claude-code
-```
-
 **Q: 启动报错 `找不到 nanobot 命令`**
-确认 nanobot 已安装并添加到系统 PATH。
+`push` 会先尝试 nanobot，未安装时自动回退飞书 Open API/webhook（见 `config.json` 的 `feishu_app_id`/`feishu_app_secret`/`feishu_webhook_url`），不影响推送；如需用 nanobot，确认已安装并添加到系统 PATH。
 
-**Q: 想用 Windows 任务计划程序代替 GUI 常驻**
-在任务计划程序中添加触发器（每天 08:00），操作设置为：
+**Q: 想用 Windows 任务计划程序定时抓取**
+在任务计划程序中添加触发器（如每天 08:00），操作设置为：
 ```
 程序: uv
 参数: run python run_once.py
 起始位置: E:\sourceCode\dev\ai\ai-news
 ```
 
-**Q: 修改了 prompt 模板后不生效**
-直接编辑 `config.json` 中的 `claude_prompt_template` 字段，下次执行时自动读取，无需重启 GUI。
+**Q: 局域网内其他设备访问不了 `http://<本机IP>:8000`**
+确认 `serve` 使用的是默认 `--host 0.0.0.0`（而非 `127.0.0.1`），并检查本机防火墙是否放行对应端口。
