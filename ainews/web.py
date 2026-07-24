@@ -7,7 +7,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from ainews import db
+from ainews import db, stockref
 from ainews.cache import QueryCache
 from ainews.classifier import DEFAULT_RULES
 from ainews.watch_match import annotate
@@ -63,9 +63,14 @@ def create_app(conn_factory: Callable, cache: QueryCache,
             "watch": db.list_watch(conn), "related": related})
 
     @app.post("/watchlist/add")
-    def watchlist_add(code: str = Form(...), name: str = Form(...), aliases: str = Form("")):
+    def watchlist_add(code: str = Form(""), name: str = Form(""), aliases: str = Form("")):
+        code, name = code.strip(), name.strip()
+        if not code and not name:
+            return RedirectResponse("/watchlist", status_code=303)
         alias_list = [a.strip() for a in aliases.split(",") if a.strip()]
-        db.add_watch(conn_factory(), code.strip(), name.strip(), alias_list)
+        conn = conn_factory()
+        resolved_code, resolved_name = stockref.resolve(conn, code=code or None, name=name or None)
+        db.add_watch(conn, resolved_code, resolved_name, alias_list)
         return RedirectResponse("/watchlist", status_code=303)
 
     @app.post("/watchlist/remove")

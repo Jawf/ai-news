@@ -37,3 +37,31 @@ def test_watchlist_page_and_add_remove():
     assert "中芯国际" in r.text
     r = client.post("/watchlist/remove", data={"code": "688981"}, follow_redirects=True)
     assert "中芯国际" not in r.text
+
+
+def test_watchlist_add_reverse_lookup_by_name_only():
+    """只填名称,代码从预置的 stock_ref 全 A 股映射表反查补全（不触网络）。"""
+    from ainews import db as db_mod
+    client, conn = _setup()
+    db_mod.bulk_upsert_stock_ref(conn, [("601318", "中国平安")])
+    r = client.post("/watchlist/add", data={"name": "中国平安"}, follow_redirects=True)
+    assert "中国平安" in r.text
+    assert "601318" in r.text
+
+
+def test_watchlist_add_reverse_lookup_by_code_only():
+    """只填代码,名称从预置的 stock_ref 反查补全。"""
+    from ainews import db as db_mod
+    client, conn = _setup()
+    db_mod.bulk_upsert_stock_ref(conn, [("000002", "万科A")])
+    r = client.post("/watchlist/add", data={"code": "000002"}, follow_redirects=True)
+    assert "万科A" in r.text
+    assert "000002" in r.text
+
+
+def test_watchlist_add_both_empty_is_noop():
+    client, conn = _setup()
+    before = len(db.list_watch(conn))
+    r = client.post("/watchlist/add", data={"code": "", "name": ""}, follow_redirects=True)
+    assert r.status_code == 200
+    assert len(db.list_watch(conn)) == before

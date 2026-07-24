@@ -3,11 +3,12 @@
 <h2 class="section-title">⭐ 我的自选股</h2>
 <div class="panel">
   <form class="filters" method="post" action="/watchlist/add" style="margin-bottom:14px">
-    <input name="code" placeholder="代码 如 600036" required>
-    <input name="name" placeholder="名称 如 招商银行" required>
+    <input name="code" placeholder="代码 或 留空">
+    <input name="name" placeholder="名称 或 留空">
     <input name="aliases" placeholder="别名(逗号分隔,选填)">
     <button type="submit">+ 添加</button>
   </form>
+  <p style="color:var(--text-faint);font-size:12px;margin:-8px 0 14px">代码或名称任填其一,另一个自动补全(A股)</p>
   <ul class="watch-list">
     {% for w in watch %}
     <li>

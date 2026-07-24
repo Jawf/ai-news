@@ -56,6 +56,10 @@ def init_db(conn: sqlite3.Connection) -> None:
             aliases_json TEXT DEFAULT '[]',
             added_at TEXT
         );
+        CREATE TABLE IF NOT EXISTS stock_ref (
+            code TEXT PRIMARY KEY,
+            name TEXT
+        );
         """
     )
     conn.commit()
@@ -149,3 +153,39 @@ def list_watch(conn) -> list[dict]:
     rows = conn.execute("SELECT code, name, aliases_json FROM watchlist ORDER BY id").fetchall()
     return [{"code": r["code"], "name": r["name"], "aliases": json.loads(r["aliases_json"])}
             for r in rows]
+
+
+def bulk_upsert_stock_ref(conn: sqlite3.Connection, rows: list[tuple[str, str]]) -> int:
+    """INSERT OR IGNORE 全 A 股代码/名称映射，返回本次实际插入（非重复）的行数。"""
+    before = conn.total_changes
+    conn.executemany(
+        "INSERT OR IGNORE INTO stock_ref (code, name) VALUES (?, ?)", rows
+    )
+    conn.commit()
+    return conn.total_changes - before
+
+
+def stock_ref_count(conn: sqlite3.Connection) -> int:
+    return conn.execute("SELECT COUNT(*) FROM stock_ref").fetchone()[0]
+
+
+def _normalize_stock_code(code: str) -> str:
+    """去掉交易所后缀，如 "600036.SH" -> "600036"。"""
+    return code.split(".")[0] if code else code
+
+
+def find_stock(conn: sqlite3.Connection, code: str | None = None,
+                name: str | None = None) -> tuple[str | None, str | None]:
+    """按 code 反查 name，或按 name 反查 code；未提供/未命中的一侧为 None。"""
+    result_code, result_name = None, None
+    if code:
+        norm_code = _normalize_stock_code(code)
+        row = conn.execute("SELECT name FROM stock_ref WHERE code = ?", (norm_code,)).fetchone()
+        result_code = norm_code
+        result_name = row["name"] if row else None
+    if name:
+        row = conn.execute("SELECT code FROM stock_ref WHERE name = ?", (name,)).fetchone()
+        result_name = name
+        if row:
+            result_code = row["code"]
+    return result_code, result_name
