@@ -122,7 +122,13 @@ def fetch_source(source_cfg: dict, client: httpx.Client | None = None) -> list[N
         )
         resp.raise_for_status()
         if source_cfg.get("type") == "html":
-            return normalize_html(resp.text, source_cfg)
+            html = resp.text
+            items = normalize_html(html, source_cfg)
+            if not items and "news_data" not in html:
+                # tushare 登录 cookie 失效时返回 200 的 Vue 骨架页（无新闻容器），
+                # 与"真实无新闻"的 0 条无法区分，须作为错误上抛而非静默记 fetched=0
+                raise RuntimeError("疑似未登录或 cookie 失效：未找到新闻容器")
+            return items
         return normalize(resp.json(), source_cfg)
     finally:
         if owns:

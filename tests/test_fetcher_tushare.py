@@ -1,6 +1,10 @@
 import datetime
 import os
 
+import httpx
+import pytest
+import respx
+
 from ainews import fetcher
 
 FIX = os.path.join(os.path.dirname(__file__), "fixtures", "tushare_xq_sample.html")
@@ -12,6 +16,12 @@ XQ_SOURCE = {
         "time_selector": ".news_datetime",
         "content_selector": ".news_content",
     },
+}
+
+XQ_SOURCE_HTTP = {
+    **XQ_SOURCE,
+    "endpoint": "https://example.com/tushare",
+    "method": "GET", "params": {}, "headers": {},
 }
 
 
@@ -42,3 +52,21 @@ def test_dedup_hash_stable_without_external_id():
     a = fetcher.normalize_html(html, XQ_SOURCE)
     b = fetcher.normalize_html(html, XQ_SOURCE)
     assert a[0].content_hash == b[0].content_hash   # 同源同正文同时间 → 稳定去重键
+
+
+@respx.mock
+def test_fetch_source_html_raises_on_gate_skeleton_page():
+    respx.get("https://example.com/tushare").mock(
+        return_value=httpx.Response(200, text='<div id="app"></div>'))
+    with pytest.raises(RuntimeError, match="未登录或 cookie 失效"):
+        fetcher.fetch_source(XQ_SOURCE_HTTP)
+
+
+@respx.mock
+def test_fetch_source_html_returns_normally_with_news_data_container():
+    with open(FIX, encoding="utf-8") as f:
+        html = f.read()
+    respx.get("https://example.com/tushare").mock(
+        return_value=httpx.Response(200, text=html))
+    items = fetcher.fetch_source(XQ_SOURCE_HTTP)
+    assert len(items) == 6

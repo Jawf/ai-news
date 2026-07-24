@@ -45,9 +45,12 @@ def parse_analysis_output(text: str) -> dict:
 
 
 def _default_runner(prompt: str, config: dict) -> str:
-    cmd = [config.get("claude_command", "claude"), "--print", prompt,
+    # prompt 走 stdin 而非 argv：Windows 命令行长度上限 32767 字符，
+    # 真实一天的 prompt（约 1000 条新闻，约 150KB）会超限导致进程无法启动；
+    # `claude --print` 不带位置参数时会从 stdin（管道输入）读取 prompt。
+    cmd = [config.get("claude_command", "claude"), "--print",
            "--output-format", "text", "--dangerously-skip-permissions"]
-    result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
+    result = subprocess.run(cmd, input=prompt, capture_output=True, text=True, encoding="utf-8",
                             timeout=config.get("timeout_seconds", 600))
     if result.returncode != 0:
         raise RuntimeError(result.stderr.strip()[:500] or "claude CLI 非零退出")

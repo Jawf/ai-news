@@ -48,3 +48,23 @@ def test_run_analysis_records_failure():
     assert analyzer.run_analysis({}, conn, runner=bad_runner) is False
     row = conn.execute("SELECT status FROM analysis_runs ORDER BY id DESC LIMIT 1").fetchone()
     assert row[0] == "error"
+
+
+def test_default_runner_passes_prompt_via_stdin_not_argv(monkeypatch):
+    captured = {}
+
+    def fake(cmd, input=None, capture_output=None, text=None, encoding=None, timeout=None):
+        captured["cmd"] = cmd
+        captured["input"] = input
+        class Result:
+            returncode = 0
+            stdout = "{}"
+            stderr = ""
+        return Result()
+
+    monkeypatch.setattr(analyzer.subprocess, "run", fake)
+    prompt = "这是一个很长的 prompt" * 100
+    out = analyzer._default_runner(prompt, {})
+    assert out == "{}"
+    assert captured["input"] == prompt
+    assert prompt not in captured["cmd"]
