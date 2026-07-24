@@ -33,6 +33,7 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("fetch-once", help="抓取一轮后退出")
     p_push = sub.add_parser("push", help="选 Top-N 推送飞书")
     p_push.add_argument("-n", type=int, default=10)
+    sub.add_parser("analyze", help="立即跑一次 Claude 批量分析")
     args = parser.parse_args(argv)
 
     if args.cmd == "serve":
@@ -52,6 +53,14 @@ def main(argv: list[str] | None = None) -> int:
         conn = _open_conn()
         db.init_db(conn)
         ok = push.run_push(_load_config(), conn, n=args.n)
+        return 0 if ok else 1
+
+    if args.cmd == "analyze":
+        from ainews import analyzer
+        conn = _open_conn()
+        db.init_db(conn)
+        ok = analyzer.run_analysis(_load_config(), conn)
+        print("分析完成" if ok else "分析失败，详见 analysis_runs 表")
         return 0 if ok else 1
 
     return 2

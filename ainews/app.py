@@ -2,6 +2,7 @@
 import os
 import threading
 
+from ainews import analyzer
 from ainews import config as cfg_mod
 from ainews import db, scheduler, web
 from ainews.cache import QueryCache
@@ -20,8 +21,12 @@ def build_app(config: dict, sources: list[dict]):
     app = web.create_app(conn_factory, cache)
 
     if config.get("scheduler_enabled", True) and sources:
+        analysis_times = config.get("analysis_times", ["08:00", "12:00"])
         t = threading.Thread(
             target=scheduler.start_scheduler,
-            args=(conn_factory, sources), daemon=True)
+            args=(conn_factory, sources),
+            kwargs={"analysis_job": lambda: analyzer.run_analysis(config, conn_factory()),
+                    "analysis_times": analysis_times},
+            daemon=True)
         t.start()
     return app, conn_factory
