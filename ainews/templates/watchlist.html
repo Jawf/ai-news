@@ -1,22 +1,38 @@
 {% extends "base.html" %}
 {% block content %}
-<section class="panel"><h2>⭐ 我的自选股</h2>
-<form class="filters" method="post" action="/watchlist/add">
-  <input name="code" placeholder="代码" required>
-  <input name="name" placeholder="名称" required>
-  <input name="aliases" placeholder="别名(逗号分隔)">
-  <button type="submit">添加</button>
-</form>
-<ul>{% for w in watch %}
-  <li>{{ w.name }}（{{ w.code }}）
-    <form method="post" action="/watchlist/remove" style="display:inline">
-      <input type="hidden" name="code" value="{{ w.code }}"><button>删除</button></form>
-  </li>{% else %}<li class="empty">暂无自选股</li>{% endfor %}</ul></section>
-<section class="panel"><h2>🔔 自选股相关消息</h2>
-<ul>{% for r in related %}
-  <li><b>{{ r.name }}</b>
-    <ul>{% for it in r['items'] %}
-      <li><span class="tag {{ 'tag-good' if it.sentiment == '利好' else 'tag-bad' if it.sentiment == '利空' else 'tag-neutral' }}">{{ it.sentiment }}</span>{{ it.title }}</li>
-    {% endfor %}</ul></li>
-  {% else %}<li class="empty">暂无关联消息</li>{% endfor %}</ul></section>
+<h2 class="section-title">⭐ 我的自选股</h2>
+<div class="panel">
+  <form class="filters" method="post" action="/watchlist/add" style="margin-bottom:14px">
+    <input name="code" placeholder="代码 如 600036" required>
+    <input name="name" placeholder="名称 如 招商银行" required>
+    <input name="aliases" placeholder="别名(逗号分隔,选填)">
+    <button type="submit">+ 添加</button>
+  </form>
+  <ul class="watch-list">
+    {% for w in watch %}
+    <li>
+      <span>{{ w.name }}</span><span class="code">{{ w.code }}</span>
+      <form method="post" action="/watchlist/remove" style="display:inline">
+        <input type="hidden" name="code" value="{{ w.code }}"><button title="删除">×</button>
+      </form>
+    </li>
+    {% else %}<li style="border:0;background:none;color:var(--text-faint)">暂无自选股,添加后即可追踪相关消息</li>{% endfor %}
+  </ul>
+</div>
+
+<h2 class="section-title">🔔 自选股相关消息</h2>
+<div class="panel">
+  <ul class="rel-list">
+    {% for r in related %}
+    <li class="rel-item">
+      <b>{{ r.name }} · {{ r.code }}</b>
+      <ul>
+        {% for it in r['items'] %}
+        <li><span class="tag {{ 'tag-good' if it.sentiment == '利好' else 'tag-bad' if it.sentiment == '利空' else 'tag-neutral' }}">{{ it.sentiment }}</span>{{ it.title }}</li>
+        {% endfor %}
+      </ul>
+    </li>
+    {% else %}<li class="empty" style="padding:30px">暂无关联消息(需先有当日洞察分析结果)</li>{% endfor %}
+  </ul>
+</div>
 {% endblock %}

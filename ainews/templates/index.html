@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% set SRC = {'xq': '雪球', 'sina': '新浪财经'} %}
 {% block content %}
 <form class="filters" method="get" action="/">
   <select name="category" onchange="this.form.submit()">
@@ -9,22 +10,35 @@
   </select>
   <input type="date" name="date" value="{{ date }}" onchange="this.form.submit()">
 </form>
-<ul class="news-list">
+<ul class="feed">
   {% for it in items %}
-  <li class="news-card">
-    <div class="meta"><span class="src">{{ it.source }}</span>
-      <span class="cat">{{ it.category }}</span>
-      <span class="time">{{ it.published_at or '' }}</span></div>
-    <a class="title" href="{{ it.url }}" target="_blank" rel="noopener">{{ it.title }}</a>
-    {% if it.content %}<p class="content">{{ it.content }}</p>{% endif %}
+  <li class="feed-item{% if it.category != '其他' %} hot{% endif %}">
+    <div class="feed-time">
+      {% if it.published_at %}
+      <span class="hm">{{ it.published_at[11:16] }}</span>
+      <span class="md">{{ it.published_at[5:10] }}</span>
+      {% else %}<span class="hm">—</span>{% endif %}
+    </div>
+    <div class="feed-body">
+      <div class="feed-head">
+        <span class="chip src">{{ SRC.get(it.source, it.source) }}</span>
+        {% if it.category != '其他' %}<span class="chip">{{ it.category }}</span>{% endif %}
+      </div>
+      {% if it.url %}
+      <a class="feed-title" href="{{ it.url }}" target="_blank" rel="noopener">{{ it.title }}</a>
+      {% else %}
+      <div class="feed-title">{{ it.title }}</div>
+      {% endif %}
+      {% if it.content %}<div class="feed-src">{{ it.content }}</div>{% endif %}
+    </div>
   </li>
   {% else %}
-  <li class="empty">暂无数据</li>
+  <li class="empty">暂无快讯。填好 .env 的 TUSHARE_COOKIE 后运行 fetch-once 抓取。</li>
   {% endfor %}
 </ul>
 <nav class="pager">
-  {% if page > 1 %}<a href="?category={{ category }}&date={{ date }}&page={{ page - 1 }}">上一页</a>{% endif %}
+  {% if page > 1 %}<a href="?category={{ category }}&date={{ date }}&page={{ page - 1 }}">← 上一页</a>{% endif %}
   <span>第 {{ page }} 页</span>
-  {% if items|length == 30 %}<a href="?category={{ category }}&date={{ date }}&page={{ page + 1 }}">下一页</a>{% endif %}
+  {% if items|length == 30 %}<a href="?category={{ category }}&date={{ date }}&page={{ page + 1 }}">下一页 →</a>{% endif %}
 </nav>
 {% endblock %}

@@ -3,15 +3,22 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>财经新闻</title>
+  <title>财经快讯 · Market Wire</title>
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-  <header class="topbar"><h1>📰 财经新闻</h1>
-  <nav class="nav">
-    <a href="/">新闻流</a><a href="/insights">当日洞察</a><a href="/watchlist">自选股</a>
-  </nav>
+  <header class="topbar">
+    <a href="/" class="brand">
+      <span class="dot"></span>
+      <span class="zh">财经快讯</span>
+      <span class="en">Market Wire</span>
+    </a>
+    <nav class="nav">
+      <a href="/" {% if request.url.path == '/' %}class="active"{% endif %}>快讯流</a>
+      <a href="/insights" {% if request.url.path == '/insights' %}class="active"{% endif %}>当日洞察</a>
+      <a href="/watchlist" {% if request.url.path == '/watchlist' %}class="active"{% endif %}>自选股</a>
+    </nav>
   </header>
-  <main>{% block content %}{% endblock %}</main>
+  <main class="{% block main_class %}{% endblock %}">{% block content %}{% endblock %}</main>
 </body>
 </html>
