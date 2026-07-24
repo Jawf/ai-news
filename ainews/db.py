@@ -85,12 +85,35 @@ def init_db(conn: sqlite3.Connection) -> None:
             amount REAL,
             stamp_tax REAL DEFAULT 0,
             commission REAL DEFAULT 0,
+            transfer_fee REAL DEFAULT 0,
             reason TEXT,
             pnl REAL
+        );
+        CREATE TABLE IF NOT EXISTS pending_orders (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            created_at TEXT,
+            code TEXT,
+            name TEXT,
+            side TEXT,
+            reason TEXT,
+            priority REAL DEFAULT 0
+        );
+        CREATE TABLE IF NOT EXISTS account (
+            id INTEGER PRIMARY KEY CHECK(id = 1),
+            cash REAL
         );
         """
     )
     conn.commit()
+    _ensure_column(conn, "trades", "transfer_fee", "REAL DEFAULT 0")
+
+
+def _ensure_column(conn: sqlite3.Connection, table: str, column: str, ddl_type: str) -> None:
+    """存量库迁移：老库的 CREATE TABLE IF NOT EXISTS 不会补新列，这里按需 ALTER TABLE。"""
+    cols = {r[1] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+    if column not in cols:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl_type}")
+        conn.commit()
 
 
 def _iso(dt: datetime.datetime | None) -> str | None:
@@ -240,16 +263,27 @@ def list_positions(conn: sqlite3.Connection, status: str = "holding") -> list[di
 
 def record_trade(conn: sqlite3.Connection, *, trade_at, code: str, name: str | None, side: str,
                   qty: int, price: float, amount: float, stamp_tax: float = 0.0,
-                  commission: float = 0.0, reason: str = "", pnl: float | None = None) -> None:
+                  commission: float = 0.0, transfer_fee: float = 0.0, reason: str = "",
+                  pnl: float | None = None) -> None:
     """记一笔成交（side: buy/sell）。trade_at 接受 datetime 或已格式化字符串。"""
     conn.execute(
         """INSERT INTO trades
-           (trade_at, code, name, side, qty, price, amount, stamp_tax, commission, reason, pnl)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+           (trade_at, code, name, side, qty, price, amount, stamp_tax, commission,
+            transfer_fee, reason, pnl)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (_iso(trade_at) if isinstance(trade_at, datetime.datetime) else trade_at,
-         code, name, side, qty, price, amount, stamp_tax, commission, reason, pnl),
+         code, name, side, qty, price, amount, stamp_tax, commission, transfer_fee, reason, pnl),
     )
     conn.commit()
+
+
+def last_trade(conn: sqlite3.Connection, code: str, side: str) -> dict | None:
+    """按 code + side 取最近一笔成交（按 trade_at 降序），供冷却期判断用。"""
+    row = conn.execute(
+        "SELECT * FROM trades WHERE code = ? AND side = ? ORDER BY trade_at DESC, id DESC LIMIT 1",
+        (code, side),
+    ).fetchone()
+    return dict(row) if row else None
 
 
 def list_trades(conn: sqlite3.Connection, limit: int = 200) -> list[dict]:
@@ -279,3 +313,60 @@ def find_stock(conn: sqlite3.Connection, code: str | None = None,
         if row:
             result_code = row["code"]
     return result_code, result_name
+
+
+# --- 待办单（session gating 下的延迟成交队列） ---
+
+def queue_pending_order(conn: sqlite3.Connection, *, created_at, code: str, name: str | None,
+                         side: str, reason: str, priority: float = 0.0) -> int:
+    """登记一笔待办单（side: buy/sell），闭市期间的交易决策先落这里，开市巡检时再成交。"""
+    cur = conn.execute(
+        """INSERT INTO pending_orders (created_at, code, name, side, reason, priority)
+           VALUES (?, ?, ?, ?, ?, ?)""",
+        (_iso(created_at) if isinstance(created_at, datetime.datetime) else created_at,
+         code, name, side, reason, priority),
+    )
+    conn.commit()
+    return cur.lastrowid
+
+
+def list_pending_orders(conn: sqlite3.Connection, side: str | None = None) -> list[dict]:
+    if side:
+        rows = conn.execute(
+            "SELECT * FROM pending_orders WHERE side = ? ORDER BY priority DESC, id", (side,)
+        ).fetchall()
+    else:
+        rows = conn.execute("SELECT * FROM pending_orders ORDER BY priority DESC, id").fetchall()
+    return [dict(r) for r in rows]
+
+
+def delete_pending_order(conn: sqlite3.Connection, order_id: int) -> None:
+    conn.execute("DELETE FROM pending_orders WHERE id = ?", (order_id,))
+    conn.commit()
+
+
+def has_pending_order(conn: sqlite3.Connection, code: str, side: str) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM pending_orders WHERE code = ? AND side = ? LIMIT 1", (code, side)
+    ).fetchone()
+    return row is not None
+
+
+# --- 模拟资金账户（单行表，现金余额） ---
+
+def get_cash(conn: sqlite3.Connection, initial: float) -> float:
+    """惰性初始化：账户不存在则以 initial 建行，返回当前现金余额。"""
+    row = conn.execute("SELECT cash FROM account WHERE id = 1").fetchone()
+    if row is None:
+        conn.execute("INSERT INTO account (id, cash) VALUES (1, ?)", (initial,))
+        conn.commit()
+        return initial
+    return row["cash"]
+
+
+def adjust_cash(conn: sqlite3.Connection, delta: float) -> float:
+    """调整现金余额（买入传负值扣款，卖出传正值入账），返回调整后余额。"""
+    conn.execute("UPDATE account SET cash = cash + ? WHERE id = 1", (delta,))
+    conn.commit()
+    row = conn.execute("SELECT cash FROM account WHERE id = 1").fetchone()
+    return row["cash"] if row else None

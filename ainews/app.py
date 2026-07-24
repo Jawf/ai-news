@@ -35,7 +35,7 @@ def build_app(config: dict, sources: list[dict]):
                     "cleanup_job": lambda: db.purge_old_news(
                         conn_factory(), days=int(config.get("retention_days", 30))),
                     "cleanup_time": config.get("cleanup_time", "03:30"),
-                    "stops_job": lambda: trader.check_stops(config, conn_factory())},
+                    "stops_job": lambda: trader.run_patrol(config, conn_factory())},
             daemon=True)
         t.start()
     return app, conn_factory

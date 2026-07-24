@@ -19,5 +19,8 @@
   "take_profit": 0.10,
   "stop_loss": 0.08,
   "min_sources_to_buy": 2,
-  "max_positions": 20
+  "max_positions": 20,
+  "initial_capital": 2000000,
+  "reentry_cooldown_days": 3,
+  "transfer_fee_rate": 0.00001
 }

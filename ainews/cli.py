@@ -76,8 +76,10 @@ def main(argv: list[str] | None = None) -> int:
         from ainews import trader
         conn = _open_conn()
         db.init_db(conn)
-        summary = trader.run_trading(_load_config(), conn)
-        print(f"模拟交易完成：{summary}")
+        config = _load_config()
+        summary = trader.run_trading(config, conn)
+        patrol_summary = trader.run_patrol(config, conn)
+        print(f"模拟交易完成：{summary}；巡检（待办单+止盈止损）：{patrol_summary}")
         return 0
 
     return 2
