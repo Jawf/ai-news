@@ -17,6 +17,7 @@
       <a href="/" {% if request.url.path == '/' %}class="active"{% endif %}>快讯流</a>
       <a href="/insights" {% if request.url.path == '/insights' %}class="active"{% endif %}>当日洞察</a>
       <a href="/watchlist" {% if request.url.path == '/watchlist' %}class="active"{% endif %}>自选股</a>
+      <a href="/trading" {% if request.url.path == '/trading' %}class="active"{% endif %}>模拟交易</a>
     </nav>
   </header>
   <main class="{% block main_class %}{% endblock %}">{% block content %}{% endblock %}</main>

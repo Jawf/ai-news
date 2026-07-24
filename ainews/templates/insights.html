@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% set SRC = {'xq': '雪球', 'sina': '新浪财经', 'jinrongjie': '金融界', 'jinshi': '金十', 'yicai': '第一财经', '10jqka': '同花顺', 'cls': '财联社', 'eastmoney': '东方财富', 'wallstreetcn': '华尔街见闻'} %}
 {% block main_class %}wide{% endblock %}
+{% macro qadd(s) %}{% if s.code and s.code not in watch_codes %}<form method="post" action="/watchlist/add" class="qadd"><input type="hidden" name="code" value="{{ s.code }}"><input type="hidden" name="name" value="{{ s.name }}"><input type="hidden" name="next" value="/insights"><button type="submit" title="加自选">+</button></form>{% endif %}{% endmacro %}
 {% block content %}
 {% if not data %}
 <p class="empty">暂无分析结果。等待每日 08:00 / 12:00 定时分析,或运行 <code>ainews.cli analyze</code>。</p>
@@ -21,13 +22,13 @@
     <h3>📈 利好</h3>
     <div class="kv"><span class="k">方向</span><span class="v">{{ data.bullish.directions | join('、') or '—' }}</span></div>
     <div class="kv"><span class="k">板块</span><span class="v">{{ data.bullish.sectors | join('、') or '—' }}</span></div>
-    <div class="kv"><span class="k">个股</span><span class="v">{% for s in data.bullish.stocks %}<span class="stock">{{ s.name }}{% if s.code %} {{ s.code }}{% endif %}</span>{% else %}—{% endfor %}</span></div>
+    <div class="kv"><span class="k">个股</span><span class="v">{% for s in data.bullish.stocks %}<span class="stock">{{ s.name }}{% if s.code %} {{ s.code }}{% endif %}</span>{{ qadd(s) }}{% else %}—{% endfor %}</span></div>
   </div>
   <div class="panel bad">
     <h3>📉 利空</h3>
     <div class="kv"><span class="k">方向</span><span class="v">{{ data.bearish.directions | join('、') or '—' }}</span></div>
     <div class="kv"><span class="k">板块</span><span class="v">{{ data.bearish.sectors | join('、') or '—' }}</span></div>
-    <div class="kv"><span class="k">个股</span><span class="v">{% for s in data.bearish.stocks %}<span class="stock">{{ s.name }}{% if s.code %} {{ s.code }}{% endif %}</span>{% else %}—{% endfor %}</span></div>
+    <div class="kv"><span class="k">个股</span><span class="v">{% for s in data.bearish.stocks %}<span class="stock">{{ s.name }}{% if s.code %} {{ s.code }}{% endif %}</span>{{ qadd(s) }}{% else %}—{% endfor %}</span></div>
   </div>
 </div>
 
@@ -44,7 +45,7 @@
         {% for h in it.watch_hits %}<span class="tag tag-watch">自选·{{ h.name }}</span>{% endfor %}
       </div>
       <div class="feed-title">{{ it.title }}</div>
-      <div class="feed-src">{{ it.reason }}{% if it.sectors %} ｜ 板块：{{ it.sectors | join('、') }}{% endif %}{% if it.stocks %} ｜ 个股：{% for s in it.stocks %}{{ s.name }} {% endfor %}{% endif %}{% if it.sources %} ｜ 信源：{{ it.sources | join('、') }}{% endif %}</div>
+      <div class="feed-src">{{ it.reason }}{% if it.sectors %} ｜ 板块：{{ it.sectors | join('、') }}{% endif %}{% if it.stocks %} ｜ 个股：{% for s in it.stocks %}{{ s.name }}{{ qadd(s) }} {% endfor %}{% endif %}{% if it.sources %} ｜ 信源：{{ it.sources | join('、') }}{% endif %}</div>
     </div>
   </li>
   {% endfor %}

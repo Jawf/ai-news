@@ -1,6 +1,14 @@
+import pytest
 from fastapi.testclient import TestClient
 from ainews import db, web
 from ainews.cache import QueryCache
+
+
+@pytest.fixture(autouse=True)
+def _no_network_quotes(monkeypatch):
+    """默认阻断 quotes 模块的真实行情获取,测试内按需 monkeypatch 覆盖具体返回值。"""
+    monkeypatch.setattr(web.quotes, "get_quotes", lambda codes: {})
+    monkeypatch.setattr(web.quotes, "get_prices", lambda codes: {})
 
 
 def _setup():
@@ -89,3 +97,72 @@ def test_watchlist_add_both_empty_is_noop():
     r = client.post("/watchlist/add", data={"code": "", "name": ""}, follow_redirects=True)
     assert r.status_code == 200
     assert len(db.list_watch(conn)) == before
+
+
+# --- 洞察页个股一键加自选 ---
+
+def _setup_insights_with_bullish_stock():
+    conn = db.get_conn(":memory:")
+    db.init_db(conn)
+    db.save_analysis_run(conn, __import__("datetime").datetime.now(), "ok", payload={
+        "top20": [{"title": "招商银行业绩超预期", "source": "xq", "importance": 90,
+                   "sentiment": "利好", "sectors": ["银行"],
+                   "stocks": [{"name": "招商银行", "code": "600036"}], "reason": "超预期"}],
+        "bullish": {"directions": ["宽松"], "sectors": ["银行"],
+                   "stocks": [{"name": "招商银行", "code": "600036"}]},
+        "bearish": {"directions": [], "sectors": [], "stocks": []},
+        "company_sina": [], "top5_bullish": [],
+    })
+    app = web.create_app(lambda: conn, QueryCache(ttl=1))
+    return TestClient(app), conn
+
+
+def test_insights_shows_qadd_for_stock_not_in_watchlist():
+    client, _ = _setup_insights_with_bullish_stock()
+    r = client.get("/insights")
+    assert r.status_code == 200
+    assert 'class="qadd"' in r.text
+    assert 'value="600036"' in r.text
+
+
+def test_qadd_post_redirects_back_to_insights_and_hides_form():
+    client, conn = _setup_insights_with_bullish_stock()
+
+    r = client.post("/watchlist/add",
+                    data={"code": "600036", "name": "招商银行", "next": "/insights"},
+                    follow_redirects=False)
+    assert r.status_code == 303
+    assert r.headers["location"] == "/insights"
+    assert any(w["code"] == "600036" for w in db.list_watch(conn))
+
+    r = client.get("/insights")
+    assert 'class="qadd"' not in r.text
+
+
+def test_watchlist_add_without_next_defaults_to_watchlist():
+    client, conn = _setup()
+    r = client.post("/watchlist/add", data={"code": "688981", "name": "中芯国际"},
+                    follow_redirects=False)
+    assert r.status_code == 303
+    assert r.headers["location"] == "/watchlist"
+
+
+# --- 自选股行情信息 ---
+
+def test_watchlist_enrichment_shows_quote_and_related(monkeypatch):
+    client, conn = _setup()
+    monkeypatch.setattr(web.quotes, "get_quotes",
+                        lambda codes: {"600036": {"price": 38.5, "high": 38.5, "low": 34.0,
+                                                  "prev_close": 35.0}})
+    r = client.get("/watchlist")
+    assert r.status_code == 200
+    assert "38.50" in r.text
+    assert "10.00%" in r.text
+    assert "关联1条" in r.text
+
+
+def test_watchlist_enrichment_offline_falls_back_to_dash():
+    client, conn = _setup()  # fixture 已 monkeypatch get_quotes 返回空,模拟离线
+    r = client.get("/watchlist")
+    assert r.status_code == 200
+    assert "—" in r.text

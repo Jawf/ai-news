@@ -18,7 +18,7 @@ def build_app(config: dict, sources: list[dict]):
         return db.get_conn(DB_PATH)
 
     cache = QueryCache(ttl=float(config.get("cache_ttl", 45)))
-    app = web.create_app(conn_factory, cache)
+    app = web.create_app(conn_factory, cache, config=config)
 
     if config.get("scheduler_enabled", True) and sources:
         analysis_times = config.get("analysis_times", ["08:00", "12:00"])
