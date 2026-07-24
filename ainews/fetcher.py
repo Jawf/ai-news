@@ -74,20 +74,22 @@ def _resolve_headers(headers: dict | None) -> dict:
     return out
 
 
-def _today_at(hhmm: str) -> datetime.datetime | None:
+def _parse_hhmm(hhmm: str) -> tuple[int, int] | None:
     try:
         h, m = hhmm.strip().split(":")
-        return datetime.datetime.combine(datetime.date.today(),
-                                         datetime.time(int(h), int(m)))
+        return int(h), int(m)
     except (ValueError, AttributeError):
         return None
 
 
-def normalize_html(html: str, source_cfg: dict) -> list[NewsItem]:
+def normalize_html(html: str, source_cfg: dict, now: datetime.datetime | None = None) -> list[NewsItem]:
     m = source_cfg["mapping"]
     soup = BeautifulSoup(html, "html.parser")
     items = []
-    now = datetime.datetime.now()
+    now = now or datetime.datetime.now()
+    today = now.date()
+    cur_date = today
+    prev_minutes: int | None = None
     for node in soup.select(m["item_selector"]):
         time_el = node.select_one(m["time_selector"])
         content_el = node.select_one(m["content_selector"])
@@ -96,13 +98,27 @@ def normalize_html(html: str, source_cfg: dict) -> list[NewsItem]:
         text = content_el.get_text(strip=True)
         if not text:
             continue
+        hhmm = _parse_hhmm(time_el.get_text(strip=True)) if time_el else None
+        published_at = None
+        if hhmm is not None:
+            h, mi = hhmm
+            minutes = h * 60 + mi
+            if prev_minutes is None:
+                # 列表首条：若该时刻晚于 now（未来时刻），说明其实是昨天的
+                if datetime.datetime.combine(today, datetime.time(h, mi)) > now + datetime.timedelta(minutes=1):
+                    cur_date = today - datetime.timedelta(days=1)
+            elif minutes > prev_minutes:
+                # 倒序列表中时间反而回升 → 跨入前一天
+                cur_date -= datetime.timedelta(days=1)
+            published_at = datetime.datetime.combine(cur_date, datetime.time(h, mi))
+            prev_minutes = minutes
         item = NewsItem(
             source=source_cfg["id"],
             title=text,                 # 快讯即一句话，正文全文作标题
             content="",
             url="",
             external_id="",
-            published_at=_today_at(time_el.get_text(strip=True)) if time_el else None,
+            published_at=published_at,
             fetched_at=now,
         )
         item.category = classify(item.title, item.content)

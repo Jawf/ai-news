@@ -62,6 +62,36 @@ def test_fetch_source_html_raises_on_gate_skeleton_page():
         fetcher.fetch_source(XQ_SOURCE_HTTP)
 
 
+def _build_html(times: list[str]) -> str:
+    items_html = "".join(
+        f'<div class="news_item"><div class="news_datetime">{t}</div>'
+        f'<div class="news_content">内容{i}</div></div>'
+        for i, t in enumerate(times)
+    )
+    return f'<div class="news_data cur">{items_html}</div>'
+
+
+def test_normalize_html_infers_previous_day_when_time_rewinds_upward():
+    # 倒序(新→旧)列表跨越午夜：10:00,09:00 属今天；23:30,22:00 时间回升 → 属昨天
+    html = _build_html(["10:00", "09:00", "23:30", "22:00"])
+    now = datetime.datetime(2026, 7, 24, 10, 30)
+    items = fetcher.normalize_html(html, XQ_SOURCE, now=now)
+    assert len(items) == 4
+    assert items[0].published_at == datetime.datetime(2026, 7, 24, 10, 0)
+    assert items[1].published_at == datetime.datetime(2026, 7, 24, 9, 0)
+    assert items[2].published_at == datetime.datetime(2026, 7, 23, 23, 30)
+    assert items[3].published_at == datetime.datetime(2026, 7, 23, 22, 0)
+
+
+def test_normalize_html_first_item_future_time_is_yesterday():
+    # 首条时间晚于 now(未来) → 首条其实是昨天 23:59 的旧闻，而非今天
+    html = _build_html(["23:59", "23:00"])
+    now = datetime.datetime(2026, 7, 24, 8, 0)
+    items = fetcher.normalize_html(html, XQ_SOURCE, now=now)
+    assert items[0].published_at == datetime.datetime(2026, 7, 23, 23, 59)
+    assert items[1].published_at == datetime.datetime(2026, 7, 23, 23, 0)
+
+
 @respx.mock
 def test_fetch_source_html_returns_normally_with_news_data_container():
     with open(FIX, encoding="utf-8") as f:
