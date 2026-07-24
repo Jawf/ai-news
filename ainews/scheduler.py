@@ -11,7 +11,8 @@ logger = logging.getLogger(__name__)
 
 def start_scheduler(conn_factory, sources: list[dict], stop_event=None,
                     analysis_job=None, analysis_times=None,
-                    cleanup_job=None, cleanup_time=None) -> None:
+                    cleanup_job=None, cleanup_time=None,
+                    stops_job=None, stops_interval=3600) -> None:
     for s in sources:
         interval = int(s.get("poll_interval", 300))
         schedule.every(interval).seconds.do(
@@ -21,6 +22,8 @@ def start_scheduler(conn_factory, sources: list[dict], stop_event=None,
             schedule.every().day.at(t).do(analysis_job)
     if cleanup_job and cleanup_time:
         schedule.every().day.at(cleanup_time).do(cleanup_job)
+    if stops_job:
+        schedule.every(stops_interval).seconds.do(stops_job)
     # 启动即先跑一轮抓取
     pipeline.run_all(conn_factory(), sources)
     logger.info("调度器启动，%d 个源，%d 个分析定时点",

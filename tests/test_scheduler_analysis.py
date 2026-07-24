@@ -29,3 +29,16 @@ def test_cleanup_job_registered_alongside_analysis(monkeypatch):
     daily = [j for j in schedule_lib.get_jobs() if j.at_time is not None]
     assert len(daily) == 3
     schedule_lib.clear()
+
+
+def test_stops_job_registered_on_interval(monkeypatch):
+    schedule_lib.clear()
+    monkeypatch.setattr("ainews.pipeline.run_all", lambda conn, s: [])
+    import threading
+    stop = threading.Event(); stop.set()  # 立即退出循环，只验证注册
+    scheduler.start_scheduler(lambda: None, [], stop_event=stop,
+                              stops_job=lambda: None, stops_interval=3600)
+    interval_jobs = [j for j in schedule_lib.get_jobs() if j.at_time is None]
+    assert len(interval_jobs) == 1
+    assert interval_jobs[0].interval == 3600
+    schedule_lib.clear()

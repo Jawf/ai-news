@@ -11,5 +11,13 @@
   "log_max_lines": 1000,
   "analysis_times": ["08:00", "12:00"],
   "retention_days": 30,
-  "cleanup_time": "03:30"
+  "cleanup_time": "03:30",
+  "sim_initial_amount": 100000,
+  "stamp_tax_rate": 0.0005,
+  "commission_rate": 0.00025,
+  "commission_min": 5.0,
+  "take_profit": 0.10,
+  "stop_loss": 0.08,
+  "min_sources_to_buy": 2,
+  "max_positions": 20
 }

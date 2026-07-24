@@ -35,6 +35,7 @@ def main(argv: list[str] | None = None) -> int:
     p_push.add_argument("-n", type=int, default=10)
     sub.add_parser("analyze", help="立即跑一次 Claude 批量分析")
     sub.add_parser("purge", help="清理过期快讯（按 retention_days）")
+    sub.add_parser("trade", help="立即跑一次模拟交易（利好买/利空止盈止损卖）")
     args = parser.parse_args(argv)
 
     if args.cmd == "serve":
@@ -69,6 +70,14 @@ def main(argv: list[str] | None = None) -> int:
         db.init_db(conn)
         n = db.purge_old_news(conn, days=int(_load_config().get("retention_days", 30)))
         print(f"已清理 {n} 条过期快讯")
+        return 0
+
+    if args.cmd == "trade":
+        from ainews import trader
+        conn = _open_conn()
+        db.init_db(conn)
+        summary = trader.run_trading(_load_config(), conn)
+        print(f"模拟交易完成：{summary}")
         return 0
 
     return 2

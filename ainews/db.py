@@ -64,6 +64,30 @@ def init_db(conn: sqlite3.Connection) -> None:
             code TEXT PRIMARY KEY,
             name TEXT
         );
+        CREATE TABLE IF NOT EXISTS positions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            code TEXT NOT NULL,
+            name TEXT,
+            qty INTEGER,
+            cost_price REAL,
+            cost_amount REAL,
+            opened_at TEXT,
+            status TEXT DEFAULT 'holding'
+        );
+        CREATE TABLE IF NOT EXISTS trades (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            trade_at TEXT,
+            code TEXT,
+            name TEXT,
+            side TEXT,
+            qty INTEGER,
+            price REAL,
+            amount REAL,
+            stamp_tax REAL DEFAULT 0,
+            commission REAL DEFAULT 0,
+            reason TEXT,
+            pnl REAL
+        );
         """
     )
     conn.commit()
@@ -187,6 +211,57 @@ def purge_old_news(conn: sqlite3.Connection, days: int = 30) -> int:
     )
     conn.commit()
     return cur.rowcount
+
+
+def open_position(conn: sqlite3.Connection, code: str, name: str | None, qty: int,
+                   price: float, amount: float, opened_at) -> int:
+    """新开一条持仓（status='holding'），返回持仓 id。opened_at 接受 datetime 或已格式化字符串。"""
+    cur = conn.execute(
+        """INSERT INTO positions (code, name, qty, cost_price, cost_amount, opened_at, status)
+           VALUES (?, ?, ?, ?, ?, ?, 'holding')""",
+        (code, name, qty, price, amount,
+         _iso(opened_at) if isinstance(opened_at, datetime.datetime) else opened_at),
+    )
+    conn.commit()
+    return cur.lastrowid
+
+
+def close_position(conn: sqlite3.Connection, position_id: int) -> None:
+    conn.execute("UPDATE positions SET status = 'closed' WHERE id = ?", (position_id,))
+    conn.commit()
+
+
+def list_positions(conn: sqlite3.Connection, status: str = "holding") -> list[dict]:
+    rows = conn.execute(
+        "SELECT * FROM positions WHERE status = ? ORDER BY id", (status,)
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def record_trade(conn: sqlite3.Connection, *, trade_at, code: str, name: str | None, side: str,
+                  qty: int, price: float, amount: float, stamp_tax: float = 0.0,
+                  commission: float = 0.0, reason: str = "", pnl: float | None = None) -> None:
+    """记一笔成交（side: buy/sell）。trade_at 接受 datetime 或已格式化字符串。"""
+    conn.execute(
+        """INSERT INTO trades
+           (trade_at, code, name, side, qty, price, amount, stamp_tax, commission, reason, pnl)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (_iso(trade_at) if isinstance(trade_at, datetime.datetime) else trade_at,
+         code, name, side, qty, price, amount, stamp_tax, commission, reason, pnl),
+    )
+    conn.commit()
+
+
+def list_trades(conn: sqlite3.Connection, limit: int = 200) -> list[dict]:
+    rows = conn.execute(
+        "SELECT * FROM trades ORDER BY trade_at DESC, id DESC LIMIT ?", (limit,)
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def realized_pnl_total(conn: sqlite3.Connection) -> float:
+    row = conn.execute("SELECT SUM(pnl) FROM trades WHERE side = 'sell'").fetchone()
+    return row[0] if row and row[0] is not None else 0.0
 
 
 def find_stock(conn: sqlite3.Connection, code: str | None = None,
