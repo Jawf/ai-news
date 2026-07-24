@@ -28,6 +28,30 @@ def test_insights_renders_top20_and_tags():
     assert "自选" in r.text          # 自选股命中标记
 
 
+def test_insights_renders_multi_source_corroboration():
+    conn = db.get_conn(":memory:")
+    db.init_db(conn)
+    db.save_analysis_run(conn, __import__("datetime").datetime.now(), "ok", payload={
+        "top20": [
+            {"title": "央行全面降准", "source": "xq", "importance": 95,
+             "sentiment": "利好", "sectors": ["银行"], "stocks": [],
+             "reason": "流动性宽松", "sources": ["雪球", "财联社", "金十"]},
+            {"title": "无信源标注的旧快照条目", "source": "cls", "importance": 60,
+             "sentiment": "中性", "sectors": [], "stocks": [], "reason": "占位"},
+        ],
+        "bullish": {"directions": [], "sectors": [], "stocks": []},
+        "bearish": {"directions": [], "sectors": [], "stocks": []},
+        "company_sina": [], "top5_bullish": [],
+    })
+    app = web.create_app(lambda: conn, QueryCache(ttl=1))
+    client = TestClient(app)
+    r = client.get("/insights")
+    assert r.status_code == 200
+    assert "3源" in r.text
+    assert "雪球" in r.text and "财联社" in r.text and "金十" in r.text
+    assert "无信源标注的旧快照条目" in r.text
+
+
 def test_watchlist_page_and_add_remove():
     client, conn = _setup()
     r = client.get("/watchlist")

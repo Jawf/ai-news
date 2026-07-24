@@ -40,10 +40,11 @@
       <div class="feed-head">
         <span class="chip src">{{ SRC.get(it.source, it.source) }}</span>
         <span class="tag {{ 'tag-good' if it.sentiment == '利好' else 'tag-bad' if it.sentiment == '利空' else 'tag-neutral' }}">{{ it.sentiment }}</span>
+        {% if it.sources %}<span class="chip srcs" title="{{ it.sources | join(' / ') }}">{{ it.sources | length }}源{% if it.sources | length >= 3 %} ✓{% endif %}</span>{% endif %}
         {% for h in it.watch_hits %}<span class="tag tag-watch">自选·{{ h.name }}</span>{% endfor %}
       </div>
       <div class="feed-title">{{ it.title }}</div>
-      <div class="feed-src">{{ it.reason }}{% if it.sectors %} ｜ 板块：{{ it.sectors | join('、') }}{% endif %}{% if it.stocks %} ｜ 个股：{% for s in it.stocks %}{{ s.name }} {% endfor %}{% endif %}</div>
+      <div class="feed-src">{{ it.reason }}{% if it.sectors %} ｜ 板块：{{ it.sectors | join('、') }}{% endif %}{% if it.stocks %} ｜ 个股：{% for s in it.stocks %}{{ s.name }} {% endfor %}{% endif %}{% if it.sources %} ｜ 信源：{{ it.sources | join('、') }}{% endif %}</div>
     </div>
   </li>
   {% endfor %}

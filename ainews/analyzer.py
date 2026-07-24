@@ -12,7 +12,8 @@ logger = logging.getLogger(__name__)
 _CONTRACT = """{
   "top20": [{"title": "...", "source": "...", "importance": 0-100,
              "sentiment": "利好|利空|中性", "sectors": ["..."],
-             "stocks": [{"name": "...", "code": "..."}], "reason": "一句影响判断"}],
+             "stocks": [{"name": "...", "code": "..."}], "reason": "一句影响判断",
+             "sources": ["雪球","财联社"]}],
   "bullish": {"directions": ["..."], "sectors": ["..."], "stocks": [{"name": "...", "code": "..."}]},
   "bearish": {"directions": ["..."], "sectors": ["..."], "stocks": [{"name": "...", "code": "..."}]},
   "company_sina": [{"company": "...", "sentiment": "利好|利空", "summary": "..."}],
@@ -27,12 +28,16 @@ def build_analysis_prompt(items: list[dict], date_cn: str) -> str:
         ensure_ascii=False)
     return (
         f"今天是{date_cn}。以下是今日抓取的财经新闻(JSON 数组)：\n{news_json}\n\n"
+        "信源对照: xq=雪球, sina=新浪财经, jinrongjie=金融界, jinshi=金十, yicai=第一财经, "
+        "10jqka=同花顺, cls=财联社, eastmoney=东方财富\n\n"
         "请完成：\n"
         "1. 综合影响力/重要性选出 top20（每条给 importance 0-100、sentiment、涉及板块 sectors、"
         "涉及个股 stocks(名称+代码)、一句 reason）；\n"
         "2. 归纳整体利好 bullish 与利空 bearish 的方向 directions、板块 sectors、个股 stocks；\n"
         "3. 对 source 为 sina 的公司类资讯，按公司归类利好/利空，写入 company_sina；\n"
-        "4. 从利好中精选 top5_bullish 并给理由。\n\n"
+        "4. 从利好中精选 top5_bullish 并给理由；\n"
+        "5. 对每条 top20，标注该事件被哪些信源报道（去重后的中文信源名列表，写入 sources 字段）——"
+        "同一事件不同源的措辞可能不同，按事件语义归并统计。\n\n"
         f"只输出一个 JSON 对象（不要任何其他文字），结构如下：\n{_CONTRACT}"
     )
 

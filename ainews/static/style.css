@@ -114,6 +114,7 @@ main { max-width: 840px; margin: 0 auto; padding: 22px clamp(14px, 4vw, 28px) 60
   white-space: nowrap;
 }
 .chip.src { font-family: var(--font-mono); color: var(--accent); border-color: var(--accent-dim); background: rgba(216,162,80,.07); }
+.chip.srcs { color: var(--up); border-color: rgba(240,89,81,.35); background: rgba(240,89,81,.08); font-weight: 600; }
 .tag { display: inline-block; font-size: 11px; padding: 1.5px 9px; border-radius: 999px; white-space: nowrap; font-weight: 600; }
 .tag-good { background: rgba(240,89,81,.14); color: var(--up); }      /* 利好=红 */
 .tag-bad  { background: rgba(38,177,126,.14); color: var(--down); }   /* 利空=绿 */

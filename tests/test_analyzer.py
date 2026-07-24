@@ -21,6 +21,21 @@ def test_build_prompt_contains_news_and_contract():
     assert "降准" in p and "top20" in p and "company_sina" in p
 
 
+def test_build_prompt_contains_source_legend_and_sources_contract():
+    p = analyzer.build_analysis_prompt([{"title": "降准", "source": "xq", "content": "x"}], "2026年07月23日")
+    assert "信源对照" in p
+    assert "xq=雪球" in p and "cls=财联社" in p
+    assert '"sources"' in p
+
+
+def test_parse_roundtrips_top20_sources_list():
+    payload = dict(PAYLOAD)
+    payload["top20"] = [{**PAYLOAD["top20"][0], "sources": ["雪球", "财联社", "金十"]}]
+    text = json.dumps(payload, ensure_ascii=False)
+    out = analyzer.parse_analysis_output(text)
+    assert out["top20"][0]["sources"] == ["雪球", "财联社", "金十"]
+
+
 def test_parse_extracts_json_from_noise():
     text = "以下是分析结果：\n" + json.dumps(PAYLOAD, ensure_ascii=False) + "\n完毕"
     out = analyzer.parse_analysis_output(text)
