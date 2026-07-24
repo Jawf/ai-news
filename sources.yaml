@@ -1,5 +1,6 @@
 # 配置驱动的新闻源。新增源 = 加一条配置,无需改代码。
 # tushare.pro/news/{slug} 为需登录 cookie 的服务端渲染 HTML,结构统一。
+# poll_interval=3600 每小时抓一次;每次拉最新约1000条,靠 content_hash 去重,只有新增条目入库(增量)。
 - id: xq
   name: 雪球
   enabled: true
@@ -9,7 +10,7 @@
   params: {}
   headers: { Cookie: "${TUSHARE_COOKIE}", User-Agent: "Mozilla/5.0" }
   mapping: { item_selector: ".news_item", time_selector: ".news_datetime", content_selector: ".news_content" }
-  poll_interval: 300
+  poll_interval: 3600
 
 - id: sina
   name: 新浪财经
@@ -20,7 +21,7 @@
   params: {}
   headers: { Cookie: "${TUSHARE_COOKIE}", User-Agent: "Mozilla/5.0" }
   mapping: { item_selector: ".news_item", time_selector: ".news_datetime", content_selector: ".news_content" }
-  poll_interval: 300
+  poll_interval: 3600
 
 - id: jinrongjie
   name: 金融界
@@ -31,7 +32,7 @@
   params: {}
   headers: { Cookie: "${TUSHARE_COOKIE}", User-Agent: "Mozilla/5.0" }
   mapping: { item_selector: ".news_item", time_selector: ".news_datetime", content_selector: ".news_content" }
-  poll_interval: 300
+  poll_interval: 3600
 
 - id: jinshi
   name: 金十
@@ -42,7 +43,7 @@
   params: {}
   headers: { Cookie: "${TUSHARE_COOKIE}", User-Agent: "Mozilla/5.0" }
   mapping: { item_selector: ".news_item", time_selector: ".news_datetime", content_selector: ".news_content" }
-  poll_interval: 300
+  poll_interval: 3600
 
 - id: yicai
   name: 第一财经
@@ -53,7 +54,7 @@
   params: {}
   headers: { Cookie: "${TUSHARE_COOKIE}", User-Agent: "Mozilla/5.0" }
   mapping: { item_selector: ".news_item", time_selector: ".news_datetime", content_selector: ".news_content" }
-  poll_interval: 300
+  poll_interval: 3600
 
 - id: 10jqka
   name: 同花顺
@@ -64,7 +65,7 @@
   params: {}
   headers: { Cookie: "${TUSHARE_COOKIE}", User-Agent: "Mozilla/5.0" }
   mapping: { item_selector: ".news_item", time_selector: ".news_datetime", content_selector: ".news_content" }
-  poll_interval: 300
+  poll_interval: 3600
 
 - id: cls
   name: 财联社
@@ -75,7 +76,7 @@
   params: {}
   headers: { Cookie: "${TUSHARE_COOKIE}", User-Agent: "Mozilla/5.0" }
   mapping: { item_selector: ".news_item", time_selector: ".news_datetime", content_selector: ".news_content" }
-  poll_interval: 300
+  poll_interval: 3600
 
 - id: eastmoney
   name: 东方财富
@@ -86,4 +87,4 @@
   params: {}
   headers: { Cookie: "${TUSHARE_COOKIE}", User-Agent: "Mozilla/5.0" }
   mapping: { item_selector: ".news_item", time_selector: ".news_datetime", content_selector: ".news_content" }
-  poll_interval: 300
+  poll_interval: 3600
