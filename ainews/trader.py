@@ -40,6 +40,22 @@ def _in_session(now: datetime.datetime) -> bool:
     return (_MORNING_START <= t <= _MORNING_END) or (_AFTERNOON_START <= t <= _AFTERNOON_END)
 
 
+def _trading_days_between(d1: datetime.date, d2: datetime.date) -> int:
+    """统计 d1（不含）到 d2（含）之间的交易日（周一~周五）天数，供挂单过期判断用。
+
+    已知局限：未接入法定节假日日历，仅按"周一~周五"判断交易日，法定节假日仍会被计为交易日。
+    """
+    if d2 <= d1:
+        return 0
+    count = 0
+    d = d1 + datetime.timedelta(days=1)
+    while d <= d2:
+        if d.weekday() < 5:
+            count += 1
+        d += datetime.timedelta(days=1)
+    return count
+
+
 def _is_a_share(conn, code: str) -> bool:
     """A 股代码：6 位数字，或能在 stock_ref 全量映射表中查到。"""
     if not code:
@@ -170,9 +186,16 @@ def _resolve_bullish_candidates(conn, bullish_resolved: list[dict], top20: list[
 
 def _try_buy(config: dict, conn, code: str, name: str | None, quote: dict,
             now: datetime.datetime, reason: str) -> tuple[bool, str | None]:
-    """尝试买入。成功返回 (True, None)；失败返回 (False, 跳过原因)。"""
+    """尝试买入。成功返回 (True, None)；失败返回 (False, 跳过原因)。
+
+    硬性兜底：code 已有 holding 持仓时一律拒绝（防止调用方漏检已持仓导致同一 code 二次开仓，
+    与 run_patrol 待办单已持仓过滤/run_trading 已持仓过滤共同构成三层防护）。
+    """
     if _is_st(name):
         return False, "ST不买入"
+
+    if any(p["code"] == code for p in db.list_positions(conn, status="holding")):
+        return False, "已持仓"
 
     price = quote["price"]
     prev_close = quote.get("prev_close")
@@ -310,6 +333,17 @@ def _run_stop_sells(config: dict, conn, quotes: dict,
     return sold, skipped
 
 
+def _clear_pending_buy(conn, code: str) -> None:
+    """清除该 code 现存的所有待办买单。
+
+    用于：① in-session 直接买入成交后，清掉此前闭市登记的陈旧待办买单，防止下次巡检
+    重复执行造成第二笔持仓；② 已持仓时作废挂单，同一防重复建仓目的。
+    """
+    for order in db.list_pending_orders(conn, side="buy"):
+        if order["code"] == code:
+            db.delete_pending_order(conn, order["id"])
+
+
 def _run_buys_in_session(config: dict, conn, candidates: list[dict], quotes: dict,
                          slots: int, now: datetime.datetime) -> tuple[list[str], list[dict]]:
     bought, skipped = [], []
@@ -327,6 +361,8 @@ def _run_buys_in_session(config: dict, conn, candidates: list[dict], quotes: dic
         if ok:
             bought.append(code)
             slots -= 1
+            # 直接买入成交：清掉同 code 陈旧待办买单（若存在），防止下次巡检重复执行二次开仓
+            _clear_pending_buy(conn, code)
         else:
             skipped.append({"code": code, "name": name, "reason": why})
             if why == "涨停无卖盘" and not db.has_pending_order(conn, code, "buy"):
@@ -439,12 +475,25 @@ def run_patrol(config: dict, conn, quotes: dict[str, dict] | None = None, now=No
         return {"skipped": "closed"}
 
     skipped: list[dict] = []
+    held_positions = db.list_positions(conn, status="holding")
+    positions_by_code = {p["code"]: p for p in held_positions}
+    held_codes = set(positions_by_code)
+
     pending = db.list_pending_orders(conn)
     live_pending = []
     for order in pending:
         if order["side"] == "buy":
+            if order["code"] in held_codes:
+                # 已持仓（可能来自 in-session 直接买入/其他渠道开仓）：陈旧挂单作废，
+                # 防止重复执行造成二次开仓（与 _try_buy 已持仓兜底共同构成防护）
+                db.delete_pending_order(conn, order["id"])
+                skipped.append({"code": order["code"], "name": order["name"],
+                                "reason": "已持仓,挂单作废"})
+                continue
+            # 按交易日（周一~周五）计算过期：created_date 之后至 now.date() 的交易日数 >= 2 才过期
+            # （首个交易日仍在重试窗口内存活，跨周末不提前失效；未接入法定节假日日历）
             created_date = datetime.datetime.fromisoformat(order["created_at"]).date()
-            if created_date < (now.date() - datetime.timedelta(days=1)):
+            if _trading_days_between(created_date, now.date()) >= 2:
                 db.delete_pending_order(conn, order["id"])
                 skipped.append({"code": order["code"], "name": order["name"], "reason": "已过期"})
                 continue
@@ -453,10 +502,6 @@ def run_patrol(config: dict, conn, quotes: dict[str, dict] | None = None, now=No
     sell_orders = [o for o in live_pending if o["side"] == "sell"]
     buy_orders = sorted([o for o in live_pending if o["side"] == "buy"],
                         key=lambda o: -(o["priority"] or 0))
-
-    held_positions = db.list_positions(conn, status="holding")
-    positions_by_code = {p["code"]: p for p in held_positions}
-    held_codes = set(positions_by_code)
     needed_codes = held_codes | {o["code"] for o in sell_orders} | {o["code"] for o in buy_orders}
     if quotes is None:
         quotes = quotes_mod.get_quotes(sorted(needed_codes))

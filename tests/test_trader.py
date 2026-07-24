@@ -403,6 +403,129 @@ def test_run_patrol_expires_stale_pending_buy():
     assert any(s.get("reason") == "已过期" for s in result["skipped"])
 
 
+# --- 挂单过期改按交易日（跨周末不应提前失效） ---
+# 2026-07-17 周五；07-20 周一（第一交易日，仍在重试窗口内）；07-21 周二（第二交易日，过期）。
+
+def test_run_patrol_pending_buy_survives_monday_after_friday_creation():
+    """周五创建的待买单，周一（第一交易日）内不应被误判过期。"""
+    c = _conn()
+    friday_created = datetime.datetime(2026, 7, 17, 14, 0)
+    db.queue_pending_order(c, created_at=friday_created, code="600036", name="招商银行",
+                           side="buy", reason="利好信号(2源)")
+    monday_now = datetime.datetime(2026, 7, 20, 9, 35)
+    quotes = {"600036": _q(35.0)}
+    result = trader.run_patrol(CONFIG, c, quotes=quotes, now=monday_now)
+
+    assert result["bought"] == ["600036"]  # 未被误判过期，正常执行
+    assert db.list_pending_orders(c) == []
+    assert not any(s.get("reason") == "已过期" for s in result["skipped"])
+
+
+def test_run_patrol_pending_buy_expires_tuesday_after_friday_creation():
+    """周五创建的待买单，周一整日过去后，周二（第二交易日）应过期。"""
+    c = _conn()
+    friday_created = datetime.datetime(2026, 7, 17, 14, 0)
+    db.queue_pending_order(c, created_at=friday_created, code="600036", name="招商银行",
+                           side="buy", reason="利好信号(2源)")
+    tuesday_now = datetime.datetime(2026, 7, 21, 9, 35)
+    quotes = {"600036": _q(35.0)}
+    result = trader.run_patrol(CONFIG, c, quotes=quotes, now=tuesday_now)
+
+    assert result["bought"] == []
+    assert db.list_pending_orders(c) == []
+    assert any(s.get("reason") == "已过期" for s in result["skipped"])
+
+
+def test_run_patrol_pending_buy_survives_thursday_after_wednesday_creation():
+    """非跨周末场景（周三创建）：第一交易日（周四）内不应过期，行为与旧的按自然日规则一致。"""
+    c = _conn()
+    wednesday_created = datetime.datetime(2026, 7, 22, 14, 0)
+    db.queue_pending_order(c, created_at=wednesday_created, code="600036", name="招商银行",
+                           side="buy", reason="利好信号(2源)")
+    thursday_now = datetime.datetime(2026, 7, 23, 9, 35)
+    quotes = {"600036": _q(35.0)}
+    result = trader.run_patrol(CONFIG, c, quotes=quotes, now=thursday_now)
+
+    assert result["bought"] == ["600036"]
+    assert db.list_pending_orders(c) == []
+
+
+def test_run_patrol_pending_buy_expires_friday_after_wednesday_creation():
+    """周三创建的待买单，周四整日过去后，周五（第二交易日）应过期。"""
+    c = _conn()
+    wednesday_created = datetime.datetime(2026, 7, 22, 14, 0)
+    db.queue_pending_order(c, created_at=wednesday_created, code="600036", name="招商银行",
+                           side="buy", reason="利好信号(2源)")
+    friday_now = datetime.datetime(2026, 7, 24, 9, 35)
+    quotes = {"600036": _q(35.0)}
+    result = trader.run_patrol(CONFIG, c, quotes=quotes, now=friday_now)
+
+    assert result["bought"] == []
+    assert db.list_pending_orders(c) == []
+    assert any(s.get("reason") == "已过期" for s in result["skipped"])
+
+
+# --- 挂单去重防重复建仓（三层防护：run_patrol 已持仓过滤 / _try_buy 硬性兜底 / 直接买入清挂单） ---
+
+def test_try_buy_hard_guard_refuses_second_position_for_held_code():
+    """_try_buy 自身兜底：即便调用方未做已持仓检查，也不应对已持仓 code 二次开仓。"""
+    c = _conn()
+    ok1, why1 = trader._try_buy(CONFIG, c, "600036", "招商银行", _q(35.0), NOW, "test")
+    assert ok1 is True and why1 is None
+    ok2, why2 = trader._try_buy(CONFIG, c, "600036", "招商银行", _q(36.0), NOW, "test2")
+    assert ok2 is False and why2 == "已持仓"
+    assert len(db.list_positions(c, status="holding")) == 1
+    buy_trades = [t for t in db.list_trades(c) if t["side"] == "buy"]
+    assert len(buy_trades) == 1  # 未产生第二笔买入成交
+
+
+def test_run_patrol_skips_stale_pending_buy_when_already_holding():
+    """闭市登记的待买单，期间已通过其他渠道持有该 code；run_patrol 应作废挂单而非重复建仓。"""
+    c = _conn()
+    db.queue_pending_order(c, created_at=CLOSED_PRE_MARKET, code="600036", name="招商银行",
+                           side="buy", reason="利好信号(2源)", priority=80)
+    db.open_position(c, "600036", "招商银行", 100, 34.0, 3407.0, NOW)
+    quotes = {"600036": _q(35.0)}
+    result = trader.run_patrol(CONFIG, c, quotes=quotes, now=NOW)
+
+    assert result["bought"] == []
+    assert len(db.list_positions(c, status="holding")) == 1  # 仍然只有一笔持仓
+    assert db.list_pending_orders(c) == []  # 陈旧挂单已作废
+    buy_trades = [t for t in db.list_trades(c) if t["side"] == "buy"]
+    assert len(buy_trades) == 0  # 未产生第二笔买入成交
+    assert any(s.get("reason") == "已持仓,挂单作废" for s in result["skipped"])
+
+
+def test_full_repro_closed_queue_then_in_session_direct_buy_then_patrol_no_duplicate():
+    """完整可达路径复现：闭市 run_trading 挂单买 X -> in-session run_trading 直接买入 X
+    -> 下次 run_patrol 不应执行陈旧挂单造成第二笔持仓。"""
+    c = _conn()
+    payload = {
+        "top20": [{"stocks": [{"name": "招商银行", "code": "600036"}],
+                   "sources": ["雪球", "财联社"]}],
+        "bullish": {"stocks": [{"name": "招商银行", "code": "600036"}]},
+        "bearish": {"stocks": []},
+    }
+    # 闭市：登记待办买单
+    queue_result = trader.run_trading(CONFIG, c, payload=payload, now=CLOSED_PRE_MARKET)
+    assert queue_result["queued_buy"] == ["600036"]
+    assert len(db.list_pending_orders(c, side="buy")) == 1
+
+    # 开市：直接买入路径成交（不经过 pending order）
+    quotes = {"600036": _q(35.0)}
+    direct_result = trader.run_trading(CONFIG, c, payload=payload, quotes=quotes, now=NOW)
+    assert direct_result["bought"] == ["600036"]
+    assert len(db.list_positions(c, status="holding")) == 1
+    assert db.list_pending_orders(c) == []  # 陈旧挂单已被直接买入路径清除
+
+    # 下次巡检：不应再度买入，不应产生第二笔持仓
+    patrol_result = trader.run_patrol(CONFIG, c, quotes=quotes, now=NOW)
+    assert patrol_result["bought"] == []
+    assert len(db.list_positions(c, status="holding")) == 1
+    buy_trades = [t for t in db.list_trades(c) if t["side"] == "buy"]
+    assert len(buy_trades) == 1  # 全程只有一笔买入成交
+
+
 # --- 涨跌停约束 ---
 
 def test_buy_blocked_at_limit_up_stays_pending_then_fills_when_price_retreats():
