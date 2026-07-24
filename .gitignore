@@ -14,3 +14,4 @@ wheels/
 
 # Database files
 *.db
+*.db-*

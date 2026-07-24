@@ -11,6 +11,10 @@ def get_conn(db_path: str) -> sqlite3.Connection:
     # 单个连接可能被多个线程访问；SQLite 默认编译为线程安全（serialized），可放行。
     conn = sqlite3.connect(db_path, check_same_thread=False)
     conn.row_factory = sqlite3.Row
+    # WAL: 抓取线程写库时页面读查询不被阻塞（读写并发）；:memory: 不支持 WAL，忽略即可。
+    # busy_timeout: 罕见的写-写竞争时等待而非立即抛 database is locked。
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=5000")
     return conn
 
 
