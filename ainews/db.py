@@ -178,6 +178,17 @@ def _normalize_stock_code(code: str) -> str:
     return code.split(".")[0] if code else code
 
 
+def purge_old_news(conn: sqlite3.Connection, days: int = 30) -> int:
+    """删除 news 表中 COALESCE(published_at, fetched_at) 早于 cutoff 的行，返回删除行数。
+    不触碰 analysis_runs / watchlist / stock_ref。"""
+    cutoff = _iso(datetime.datetime.now() - datetime.timedelta(days=days))
+    cur = conn.execute(
+        "DELETE FROM news WHERE COALESCE(published_at, fetched_at) < ?", (cutoff,)
+    )
+    conn.commit()
+    return cur.rowcount
+
+
 def find_stock(conn: sqlite3.Connection, code: str | None = None,
                 name: str | None = None) -> tuple[str | None, str | None]:
     """按 code 反查 name，或按 name 反查 code；未提供/未命中的一侧为 None。"""

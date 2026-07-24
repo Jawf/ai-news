@@ -26,7 +26,10 @@ def build_app(config: dict, sources: list[dict]):
             target=scheduler.start_scheduler,
             args=(conn_factory, sources),
             kwargs={"analysis_job": lambda: analyzer.run_analysis(config, conn_factory()),
-                    "analysis_times": analysis_times},
+                    "analysis_times": analysis_times,
+                    "cleanup_job": lambda: db.purge_old_news(
+                        conn_factory(), days=int(config.get("retention_days", 30))),
+                    "cleanup_time": config.get("cleanup_time", "03:30")},
             daemon=True)
         t.start()
     return app, conn_factory

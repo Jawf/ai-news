@@ -34,6 +34,7 @@ def main(argv: list[str] | None = None) -> int:
     p_push = sub.add_parser("push", help="选 Top-N 推送飞书")
     p_push.add_argument("-n", type=int, default=10)
     sub.add_parser("analyze", help="立即跑一次 Claude 批量分析")
+    sub.add_parser("purge", help="清理过期快讯（按 retention_days）")
     args = parser.parse_args(argv)
 
     if args.cmd == "serve":
@@ -62,6 +63,13 @@ def main(argv: list[str] | None = None) -> int:
         ok = analyzer.run_analysis(_load_config(), conn)
         print("分析完成" if ok else "分析失败，详见 analysis_runs 表")
         return 0 if ok else 1
+
+    if args.cmd == "purge":
+        conn = _open_conn()
+        db.init_db(conn)
+        n = db.purge_old_news(conn, days=int(_load_config().get("retention_days", 30)))
+        print(f"已清理 {n} 条过期快讯")
+        return 0
 
     return 2
 
