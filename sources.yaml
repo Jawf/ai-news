@@ -1,3 +1,5 @@
+# 配置驱动的新闻源。新增源 = 加一条配置,无需改代码。
+# tushare.pro/news/{slug} 为需登录 cookie 的服务端渲染 HTML,结构统一。
 - id: xq
   name: 雪球
   enabled: true
@@ -5,13 +7,8 @@
   endpoint: "https://tushare.pro/news/xq"
   method: GET
   params: {}
-  headers:
-    Cookie: "${TUSHARE_COOKIE}"
-    User-Agent: "Mozilla/5.0"
-  mapping:
-    item_selector: ".news_item"
-    time_selector: ".news_datetime"
-    content_selector: ".news_content"
+  headers: { Cookie: "${TUSHARE_COOKIE}", User-Agent: "Mozilla/5.0" }
+  mapping: { item_selector: ".news_item", time_selector: ".news_datetime", content_selector: ".news_content" }
   poll_interval: 300
 
 - id: sina
@@ -21,11 +18,72 @@
   endpoint: "https://tushare.pro/news/sina"
   method: GET
   params: {}
-  headers:
-    Cookie: "${TUSHARE_COOKIE}"
-    User-Agent: "Mozilla/5.0"
-  mapping:
-    item_selector: ".news_item"
-    time_selector: ".news_datetime"
-    content_selector: ".news_content"
+  headers: { Cookie: "${TUSHARE_COOKIE}", User-Agent: "Mozilla/5.0" }
+  mapping: { item_selector: ".news_item", time_selector: ".news_datetime", content_selector: ".news_content" }
+  poll_interval: 300
+
+- id: jinrongjie
+  name: 金融界
+  enabled: true
+  type: html
+  endpoint: "https://tushare.pro/news/jinrongjie"
+  method: GET
+  params: {}
+  headers: { Cookie: "${TUSHARE_COOKIE}", User-Agent: "Mozilla/5.0" }
+  mapping: { item_selector: ".news_item", time_selector: ".news_datetime", content_selector: ".news_content" }
+  poll_interval: 300
+
+- id: jinshi
+  name: 金十
+  enabled: true
+  type: html
+  endpoint: "https://tushare.pro/news/jinshi"
+  method: GET
+  params: {}
+  headers: { Cookie: "${TUSHARE_COOKIE}", User-Agent: "Mozilla/5.0" }
+  mapping: { item_selector: ".news_item", time_selector: ".news_datetime", content_selector: ".news_content" }
+  poll_interval: 300
+
+- id: yicai
+  name: 第一财经
+  enabled: true
+  type: html
+  endpoint: "https://tushare.pro/news/yicai"
+  method: GET
+  params: {}
+  headers: { Cookie: "${TUSHARE_COOKIE}", User-Agent: "Mozilla/5.0" }
+  mapping: { item_selector: ".news_item", time_selector: ".news_datetime", content_selector: ".news_content" }
+  poll_interval: 300
+
+- id: 10jqka
+  name: 同花顺
+  enabled: true
+  type: html
+  endpoint: "https://tushare.pro/news/10jqka"
+  method: GET
+  params: {}
+  headers: { Cookie: "${TUSHARE_COOKIE}", User-Agent: "Mozilla/5.0" }
+  mapping: { item_selector: ".news_item", time_selector: ".news_datetime", content_selector: ".news_content" }
+  poll_interval: 300
+
+- id: cls
+  name: 财联社
+  enabled: true
+  type: html
+  endpoint: "https://tushare.pro/news/cls"
+  method: GET
+  params: {}
+  headers: { Cookie: "${TUSHARE_COOKIE}", User-Agent: "Mozilla/5.0" }
+  mapping: { item_selector: ".news_item", time_selector: ".news_datetime", content_selector: ".news_content" }
+  poll_interval: 300
+
+- id: eastmoney
+  name: 东方财富
+  enabled: true
+  type: html
+  endpoint: "https://tushare.pro/news/eastmoney"
+  method: GET
+  params: {}
+  headers: { Cookie: "${TUSHARE_COOKIE}", User-Agent: "Mozilla/5.0" }
+  mapping: { item_selector: ".news_item", time_selector: ".news_datetime", content_selector: ".news_content" }
   poll_interval: 300
