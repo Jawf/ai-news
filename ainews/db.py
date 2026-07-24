@@ -1,5 +1,6 @@
 """SQLite 存储：news 表 + fetch_runs 表。"""
 import datetime
+import json
 import sqlite3
 
 from ainews.models import NewsItem
@@ -40,6 +41,20 @@ def init_db(conn: sqlite3.Connection) -> None:
             new_count INTEGER DEFAULT 0,
             status TEXT,
             error TEXT DEFAULT ''
+        );
+        CREATE TABLE IF NOT EXISTS analysis_runs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_at TEXT,
+            status TEXT,
+            error TEXT DEFAULT '',
+            payload_json TEXT DEFAULT ''
+        );
+        CREATE TABLE IF NOT EXISTS watchlist (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            code TEXT NOT NULL UNIQUE,
+            name TEXT NOT NULL,
+            aliases_json TEXT DEFAULT '[]',
+            added_at TEXT
         );
         """
     )
@@ -93,3 +108,44 @@ def record_fetch_run(conn, source, started_at, finished_at,
          fetched_count, new_count, status, error),
     )
     conn.commit()
+
+
+def save_analysis_run(conn, run_at, status, payload=None, error="") -> None:
+    conn.execute(
+        "INSERT INTO analysis_runs (run_at, status, error, payload_json) VALUES (?, ?, ?, ?)",
+        (_iso(run_at), status, error, json.dumps(payload or {}, ensure_ascii=False)),
+    )
+    conn.commit()
+
+
+def latest_analysis(conn) -> dict | None:
+    row = conn.execute(
+        "SELECT payload_json FROM analysis_runs WHERE status='ok' ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    return json.loads(row[0]) if row else None
+
+
+def add_watch(conn, code: str, name: str, aliases: list[str] | None = None) -> bool:
+    import datetime as _dt
+    try:
+        conn.execute(
+            "INSERT INTO watchlist (code, name, aliases_json, added_at) VALUES (?, ?, ?, ?)",
+            (code, name, json.dumps(aliases or [], ensure_ascii=False),
+             _dt.datetime.now().isoformat()),
+        )
+        conn.commit()
+        return True
+    except sqlite3.IntegrityError:
+        return False
+
+
+def remove_watch(conn, code: str) -> bool:
+    cur = conn.execute("DELETE FROM watchlist WHERE code = ?", (code,))
+    conn.commit()
+    return cur.rowcount > 0
+
+
+def list_watch(conn) -> list[dict]:
+    rows = conn.execute("SELECT code, name, aliases_json FROM watchlist ORDER BY id").fetchall()
+    return [{"code": r["code"], "name": r["name"], "aliases": json.loads(r["aliases_json"])}
+            for r in rows]
