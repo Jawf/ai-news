@@ -1,4 +1,3 @@
 @echo off
-cd /d "%~dp0"
-uv run python main.py
-if errorlevel 1 pause
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\server.ps1" start
+pause
